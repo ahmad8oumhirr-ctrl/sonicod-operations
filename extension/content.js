@@ -221,7 +221,7 @@
     const url = (await store.get('serverUrl')) || '';
     const group = chatName();
     const today = isoOf(new Date());
-    const auto = (await store.get('auto')) || { on: false, min: 30 };
+    const sched = (await store.get('sched')) || { on: false, times: ['00:00'] };
     const lastRun = (await store.get('lastRun')) || '—';
     const cityOpts = sel => '<option value="">— Ville / Livreur —</option>' + cities.map(c => '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
     panel.innerHTML =
@@ -231,8 +231,11 @@
       (group ? '<label>Ce groupe correspond à</label><select id="snc-city">' + cityOpts(groups[group] || '') + '</select>' : '') +
       '<div class="row"><button class="btn" id="snc-one"' + (group ? '' : ' disabled') + '>Lire ce groupe</button>' +
       '<button class="btn o" id="snc-all"' + (Object.keys(groups).length ? '' : ' disabled') + '>Lire tous mes groupes (' + Object.keys(groups).length + ')</button></div>' +
-      '<div class="autobox"><label style="margin:0;display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:#1D1428"><input type="checkbox" id="snc-auto" style="width:auto"' + (auto.on ? ' checked' : '') + '> <b>Mode automatique</b> : lire tous mes groupes toutes les</label>' +
-      '<div class="row" style="align-items:center;margin-top:6px"><input type="number" id="snc-min" min="10" value="' + auto.min + '" style="max-width:80px"> <span>minutes · dernière lecture : ' + esc(lastRun) + '</span></div></div>' +
+      '<div class="autobox"><label style="margin:0;display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:#1D1428"><input type="checkbox" id="snc-auto" style="width:auto"' + (sched.on ? ' checked' : '') + '> <b>Chaque jour automatiquement</b> à :</label>' +
+      '<div class="times">' + sched.times.map((t, k) => '<span class="tchip">' + esc(t) + ' <a href="#" data-tdel="' + k + '">✕</a></span>').join('') + '</div>' +
+      '<div class="row" style="align-items:center;margin-top:6px"><input type="time" id="snc-time" value="00:00" style="max-width:120px"><button class="btn o" id="snc-tadd" style="margin:0;padding:8px">＋ Ajouter l\'heure</button></div>' +
+      '<div class="s" style="font-size:12px;color:#6F6680;margin-top:6px">Lit tous mes groupes (hier + aujourd\'hui). Dernière lecture : ' + esc(lastRun) + '</div>' +
+      '<button class="btn o" id="snc-now" style="margin-top:8px">Tester maintenant</button></div>' +
       '<div id="snc-res"></div>' +
       '<button class="btn g" id="snc-save" style="display:none">Renvoyer au Sheet</button>' +
       '<div class="log" id="snc-log">' + esc(logLines.slice(-12).join('\n')) + '</div>' +
@@ -258,8 +261,11 @@
     $('#snc-all').onclick = async () => {
       busy(true); await runAll($('#snc-day').value || today); busy(false); renderPanel();
     };
-    $('#snc-auto').onchange = async () => { await store.set('auto', { on: $('#snc-auto').checked, min: Number($('#snc-min').value) || 30 }); await store.set('lastAuto', 0); log($('#snc-auto').checked ? 'Mode automatique activé.' : 'Mode automatique arrêté.'); };
-    $('#snc-min').onchange = async () => { await store.set('auto', { on: $('#snc-auto').checked, min: Number($('#snc-min').value) || 30 }); };
+    const saveSched = async (sc) => { await store.set('sched', sc); chrome.runtime.sendMessage({ type: 'schedule', sched: sc }); };
+    $('#snc-auto').onchange = async () => { sched.on = $('#snc-auto').checked; await store.set('lastSlot', Date.now()); await saveSched(sched); log(sched.on ? 'Programmation activée : ' + sched.times.join(', ') : 'Programmation arrêtée.'); };
+    $('#snc-tadd').onclick = async () => { const t = $('#snc-time').value; if (!/^\d{2}:\d{2}$/.test(t)) return; if (sched.times.indexOf(t) < 0) sched.times.push(t); sched.times.sort(); await saveSched(sched); renderPanel(); };
+    $$('[data-tdel]').forEach(a => a.onclick = async e => { e.preventDefault(); sched.times.splice(+a.dataset.tdel, 1); await saveSched(sched); renderPanel(); });
+    $('#snc-now').onclick = async () => { busy(true); await scheduledRun(true); busy(false); renderPanel(); };
     $('#snc-save').onclick = saveAll;
     renderResults();
   }
@@ -324,25 +330,54 @@
     busy(false);
   }
 
-  /* ---------------- mode automatique ---------------- */
+  /* ---------------- programmation (chaque jour aux heures choisies) ---------------- */
   let autoBusy = false;
-  async function runAll(dayIso) {
+
+  /** Lit tous les groupes enregistrés, pour un ou plusieurs jours (chaque groupe n'est ouvert qu'une fois). */
+  async function runAll(days) {
     const groups = (await store.get('groups')) || {};
     for (const g of Object.keys(groups)) {
       log('Ouverture : ' + g + '…');
-      if (await openChat(g)) await analyseOpenChat(dayIso);
+      if (await openChat(g)) { for (const d of days) await analyseOpenChat(d); }
       else log('Groupe introuvable : ' + g);
     }
-    await store.set('lastRun', new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
+    await store.set('lastRun', new Date().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
   }
-  setInterval(async () => {
-    const auto = (await store.get('auto')) || { on: false, min: 30 };
-    const last = (await store.get('lastAuto')) || 0;
-    if (!auto.on || autoBusy || Date.now() - last < auto.min * 60000) return;
+
+  /** Dernier créneau programmé déjà passé (ex. « 2026-11-25 00:00 »), ou null. */
+  function lastSlot(times) {
+    const now = new Date();
+    let best = null;
+    [0, 1].forEach(back => {
+      const d = new Date(now.getTime() - back * 86400000);
+      (times || []).forEach(t => {
+        const m = /^(\d{2}):(\d{2})$/.exec(t); if (!m) return;
+        const at = new Date(d.getFullYear(), d.getMonth(), d.getDate(), +m[1], +m[2]);
+        if (at <= now && (!best || at > best)) best = at;
+      });
+    });
+    return best;
+  }
+
+  /** Lancement programmé : lit HIER et AUJOURD'HUI (utile pour 00:00), sans doublon grâce au Sheet. */
+  async function scheduledRun(force) {
+    const sched = (await store.get('sched')) || { on: false, times: ['00:00'] };
+    if (autoBusy || (!sched.on && !force)) return;
+    if (!$('#pane-side')) return;                     // WhatsApp pas encore chargé : on réessaie plus tard
+    const slot = lastSlot(sched.times);
+    const done = (await store.get('lastSlot')) || 0;
+    if (!force && (!slot || slot.getTime() <= done)) return;
     autoBusy = true;
-    await store.set('lastAuto', Date.now());
-    try { await runAll(isoOf(new Date())); } finally { autoBusy = false; }
-  }, 60000);
+    await store.set('lastSlot', slot ? slot.getTime() : Date.now());
+    log('▶ Lecture programmée (' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ')');
+    try {
+      const today = isoOf(new Date()), yesterday = isoOf(new Date(Date.now() - 86400000));
+      await runAll([yesterday, today]);
+      log('✓ Lecture programmée terminée.');
+    } finally { autoBusy = false; }
+  }
+  setInterval(() => { scheduledRun(false); }, 30000);
+  chrome.runtime.onMessage.addListener(msg => { if (msg && msg.type === 'scheduled') scheduledRun(false); });
 
   /* ---------------- démarrage ---------------- */
   async function start() {
