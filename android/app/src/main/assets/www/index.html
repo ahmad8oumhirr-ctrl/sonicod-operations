@@ -19,6 +19,7 @@
     <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
     <symbol id="i-sync" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
     <symbol id="i-wa" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12.6 7.3L3 21l2.3-5.3A8.4 8.4 0 1 1 21 11.5z"/></symbol>
   </defs>
 </svg>
@@ -35,8 +36,9 @@
   <nav id="nav" class="nav">
     <button type="button" data-go="op"><svg><use href="#i-box"/></svg><span>Opération</span></button>
     <button type="button" data-go="scan"><svg><use href="#i-scan"/></svg><span>Scanner</span></button>
-    <button type="button" data-go="sorties"><svg><use href="#i-out"/></svg><span>Retour Sorties</span></button>
-    <button type="button" data-go="settings"><svg><use href="#i-gear"/></svg><span>Paramètres</span></button>
+    <button type="button" data-go="attente"><svg><use href="#i-clock"/></svg><span>En attente</span></button>
+    <button type="button" data-go="sorties"><svg><use href="#i-out"/></svg><span>Sorties</span></button>
+    <button type="button" data-go="settings"><svg><use href="#i-gear"/></svg><span>Réglages</span></button>
   </nav>
 </div>
 <div id="sheetWrap" class="sheet-wrap hidden"><div class="sheet-bg" id="sheetBg"></div><div class="sheet" id="sheet"></div></div>

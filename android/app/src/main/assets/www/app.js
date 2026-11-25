@@ -134,7 +134,7 @@
     return true;
   }
   window.sonicodBack = back;
-  window.sonicodResume = function () { applyTheme(); refreshSyncPill(); retryScans(); };
+  window.sonicodResume = function () { applyTheme(); refreshSyncPill(); retryScans(); if (window.sonicodShareReady) window.sonicodShareReady(); };
 
   function setHeader(title, sub) {
     $('#topTitle').textContent = title || '';
@@ -665,6 +665,144 @@
     });
   }
 
+  /* ================= RETOURS EN ATTENTE (annoncés dans les groupes WhatsApp) ================= */
+  function newPend() { return { pid: uuid(), livreur: '', colis: '', date: todayIso(), note: '', photos: [], shared: '' }; }
+  function savePend() { store('pend', state.pend); }
+
+  ROUTES.attente = function () {
+    if (!state.pend) state.pend = store('pend') || newPend();
+    if (!state.pendList) state.pendList = store('pendList') || [];
+    var o = state.pend, c = state.config;
+    var cities = c.cities.slice();
+    if (o.livreur && cities.indexOf(o.livreur) < 0) cities.unshift(o.livreur);
+    setHeader('Retours en attente', 'Annoncés dans les groupes WhatsApp');
+    view(
+      (o.shared ? '<div class="note info"><b>Reçu depuis WhatsApp</b><div class="share-box" style="margin:8px 0 0">' + esc(o.shared) + '</div></div>' : '') +
+      '<div class="card"><div class="sec"><span class="num">＋</span><b>Nouveau retour annoncé</b></div>' +
+      '<div class="field" id="f-pLivreur"><label>Ville / Livreur</label><select class="input" id="pLivreur"><option value="">Choisir…</option>' +
+      cities.map(function (x) { return '<option' + (x === o.livreur ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') +
+      '<option value="__add">＋ Autre ville…</option></select></div>' +
+      '<div class="row2"><div class="field" id="f-pColis"><label>Colis</label><input class="input" id="pColis" type="number" inputmode="numeric" min="1" placeholder="Ex : 3" value="' + esc(o.colis) + '"></div>' +
+      '<div class="field" id="f-pDate"><label>Date</label><input class="input" id="pDate" type="date" value="' + esc(o.date) + '"></div></div>' +
+      '<div class="field"><label>Note <span class="opt">(facultatif)</span></label><textarea class="input" id="pNote" placeholder="Ex : BRV-2611…  /  2 sacs">' + esc(o.note) + '</textarea></div>' +
+      '<div class="photo-btns"><button type="button" class="pbtn" id="pCam">' + ic('cam') + 'Photo</button><button type="button" class="pbtn" id="pGal">' + ic('img') + 'Galerie</button></div>' +
+      '<div class="photos" id="pPhotos"></div>' +
+      '<button class="btn btn-primary" id="pSave" style="margin-top:14px">' + ic('clock') + 'Enregistrer « En attente »</button></div>' +
+      '<div class="card"><div class="sec"><b>Retours en attente</b><small><button class="btn btn-ghost btn-sm" id="pReload">' + ic('sync') + 'Actualiser</button></small></div>' +
+      '<div class="list" id="pList">' + pendListHtml() + '</div></div>'
+    );
+    var redraw = function () { renderPhotoGrid(o.photos, '#pPhotos', '#none', savePend); };
+    redraw();
+    var sync = function () {
+      var lv = $('#pLivreur').value; if (lv !== '__add') o.livreur = lv;
+      o.colis = $('#pColis').value.trim(); o.date = $('#pDate').value; o.note = $('#pNote').value; savePend();
+    };
+    ['#pColis', '#pDate', '#pNote'].forEach(function (sel) { $(sel).addEventListener('input', function () { sync(); var f = $(sel).closest('.field'); if (f) clearErr(f); }); });
+    $('#pLivreur').addEventListener('change', function () {
+      if ($('#pLivreur').value !== '__add') { sync(); clearErr($('#f-pLivreur')); return; }
+      $('#pLivreur').value = o.livreur || '';
+      promptBox('Nouvelle ville / livreur', 'Ex : TIZNIT').then(function (v) {
+        if (!v) return;
+        o.livreur = v; savePend();
+        if (state.config.cities.indexOf(v) < 0) state.config.cities.push(v);
+        store('config', state.config); render();
+        api('addCity', { city: v }).then(function (r) { if (r.ok) { state.config = r.data; store('config', r.data); } });
+      });
+    });
+    $('#pCam').onclick = function () { addPhotosTo(o.photos, 'takePhoto', function () { savePend(); redraw(); }); };
+    $('#pGal').onclick = function () { addPhotosTo(o.photos, 'pickPhotos', function () { savePend(); redraw(); }); };
+    $('#pReload').onclick = function () { loadPending(true); };
+    $('#pSave').onclick = function () { sync(); savePending(); };
+    bindPendList();
+    loadPending(false);
+  };
+
+  function pendListHtml() {
+    var l = state.pendList || [];
+    if (!l.length) return '<div class="empty">Aucun retour en attente</div>';
+    return l.map(function (p, i) {
+      return '<div class="item pend-item"><div class="av">' + esc(initials(p.livreur)) + '</div><div class="main">' +
+        '<div class="t1">' + esc(p.livreur) + ' <span class="badge b-wait">' + p.colis + ' colis</span></div>' +
+        '<div class="t2">' + esc(fmtDate(p.date)) + (p.photos ? ' · 📷 ' + p.photos : '') + (p.note ? ' · ' + esc(p.note) : '') + '</div></div>' +
+        '<button class="btn btn-recv btn-sm" data-recv="' + i + '">' + ic('check') + 'Reçu</button></div>';
+    }).join('');
+  }
+  function bindPendList() {
+    $$('[data-recv]').forEach(function (b) {
+      b.onclick = function () {
+        var p = state.pendList[Number(b.getAttribute('data-recv'))];
+        if (!p) return;
+        confirmBox('Retour reçu ?', p.livreur + ' · ' + p.colis + ' colis (annoncé le ' + fmtDate(p.date) + '). Il passera à « Reçu » et la Nouvelle opération sera pré-remplie.', 'Oui, reçu').then(function (ok) {
+          if (!ok) return;
+          b.disabled = true;
+          api('receivePending', { row: p.row, pid: p.pid, dateReception: todayIso() }).then(function (r) {
+            if (!r.ok) { b.disabled = false; toast(r.error || 'Erreur', 'err'); if (r.code === 'conflict') loadPending(true); return; }
+            state.pendList = state.pendList.filter(function (x) { return x !== p; }); store('pendList', state.pendList);
+            state.draft = newDraft();
+            state.draft.livreur = p.livreur; state.draft.colis = String(p.colis);
+            state.draft.dateEnvoi = p.date <= todayIso() ? p.date : ''; state.draft.note = p.note || '';
+            go('op');
+            toast('Complétez le statut puis ENVOYER', 'ok');
+          });
+        });
+      };
+    });
+  }
+  function loadPending(manual) {
+    api('listPending').then(function (r) {
+      if (!r.ok) { if (manual) toast(r.network ? 'Pas de connexion' : (r.error || 'Erreur'), 'err'); return; }
+      state.pendList = r.data; store('pendList', r.data);
+      var el = $('#pList');
+      if (el && state.route === 'attente') { el.innerHTML = pendListHtml(); bindPendList(); }
+      if (manual) toast('Liste à jour ✓', 'ok');
+    });
+  }
+  function savePending() {
+    var o = state.pend, errs = {};
+    if (!o.livreur) errs.pLivreur = 'Choisissez la ville / le livreur.';
+    if (!/^\d+$/.test(o.colis) || Number(o.colis) <= 0) errs.pColis = 'Nombre de colis ?';
+    if (!o.date) errs.pDate = 'Date ?';
+    var keys = Object.keys(errs);
+    keys.forEach(function (k) { setErr(k, errs[k]); });
+    if (keys.length) { toast('Vérifiez les champs en rouge', 'err'); return; }
+    var body = { action: 'addPending', pid: o.pid, livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim() };
+    var ids = o.photos.map(function (p) { return p.id; });
+    var b = $('#pSave'); b.disabled = true; b.innerHTML = '<i class="spin"></i> Enregistrement…';
+    var p = NATIVE ? nat('apiWithPhotos', JSON.stringify(body), JSON.stringify(ids)) : api('addPending', body);
+    p.then(function (r) {
+      b.disabled = false; b.innerHTML = ic('clock') + 'Enregistrer « En attente »';
+      if (!r.ok) { toast(r.error || 'Erreur', 'err'); return; }
+      toast('✓ ' + o.livreur + ' · ' + o.colis + ' colis en attente', 'ok');
+      state.pendList.unshift({ row: r.data.row, pid: o.pid, livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim(), photos: ids.length });
+      store('pendList', state.pendList);
+      state.pend = newPend(); savePend();
+      render();
+      loadPending(false);
+    });
+  }
+
+  /** Contenu partagé depuis WhatsApp → formulaire « En attente » pré-rempli. */
+  function checkShared() {
+    if (!NATIVE || !NATIVE.takeShared) return;
+    var raw = NATIVE.takeShared();
+    if (!raw) return;
+    var sh; try { sh = JSON.parse(raw); } catch (e) { return; }
+    var o = newPend();
+    o.photos = (sh.photos || []).slice(0, 10);
+    var text = String(sh.text || '').trim();
+    var files = (sh.files || []).join(', ');
+    o.shared = [text, files].filter(Boolean).join('\n');
+    o.note = files || text.slice(0, 200);
+    var m = /(\d{1,4})\s*(colis|coli|cols|kolis)/i.exec(text);
+    if (m) o.colis = m[1];
+    var low = text.toLowerCase();
+    (state.config.cities || []).forEach(function (cty) { if (!o.livreur && low.indexOf(cty.toLowerCase()) >= 0) o.livreur = cty; });
+    state.pend = o; savePend();
+    go('attente');
+    toast('Reçu depuis WhatsApp : complétez puis Enregistrer', 'ok');
+  }
+  window.sonicodShareReady = checkShared;
+
   /* ================= RETOUR SORTIES (photos → groupe WhatsApp) ================= */
   function newSortie() { return { date: todayIso(), note: '', photos: [], sent: false }; }
 
@@ -809,4 +947,5 @@
   $('#syncPill').onclick = function () { go('settings'); };
   go('op', {}, { replace: true });
   if (info().serverUrl) { loadConfig(); retryScans(); }
+  checkShared();
 })();

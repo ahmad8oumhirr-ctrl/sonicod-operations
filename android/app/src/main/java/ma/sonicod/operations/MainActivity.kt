@@ -15,6 +15,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -26,6 +27,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
+import androidx.core.content.IntentCompat
 import androidx.webkit.WebViewAssetLoader
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -45,6 +47,9 @@ class MainActivity : ComponentActivity() {
     private var cameraCallback: String? = null
     private var cameraFile: File? = null
     private var pickCallback: String? = null
+
+    /** Contenu partagé depuis WhatsApp (photos, PDF, texte), en attente d'être lu par la page. */
+    @Volatile private var pendingShare: String? = null
 
     private val takePicture = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val cb = cameraCallback ?: return@registerForActivityResult
@@ -128,8 +133,59 @@ class MainActivity : ComponentActivity() {
             webView.restoreState(savedInstanceState)
         }
 
+        handleShare(intent)
         io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)) }
         if (OpQueue.list(this).isNotEmpty()) SyncWorker.schedule(this)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShare(intent)
+    }
+
+    /** « Partager → SONICOD » depuis WhatsApp : on importe les photos et on garde le texte. */
+    private fun handleShare(intent: Intent?) {
+        if (intent == null) return
+        val action = intent.action
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
+        val uris = ArrayList<Uri>()
+        if (action == Intent.ACTION_SEND_MULTIPLE) {
+            IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let { uris.addAll(it) }
+        } else {
+            IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let { uris.add(it) }
+        }
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+        intent.action = null   // ne pas retraiter le même partage
+        io.execute {
+            val photos = JSONArray()
+            val files = JSONArray()
+            uris.take(10).forEach { uri ->
+                try {
+                    val type = contentResolver.getType(uri) ?: ""
+                    if (type.startsWith("image/")) {
+                        PhotoStore.importUri(this, uri)?.let { id ->
+                            photos.put(JSONObject().put("id", id).put("thumb", PhotoStore.thumbDataUrl(this, id)))
+                        }
+                    } else {
+                        files.put(displayName(uri) ?: "fichier")
+                    }
+                } catch (e: Exception) {
+                }
+            }
+            pendingShare = JSONObject().put("photos", photos).put("files", files).put("text", text).toString()
+            runOnUiThread {
+                if (::webView.isInitialized) webView.evaluateJavascript("window.sonicodShareReady && window.sonicodShareReady()", null)
+            }
+        }
+    }
+
+    private fun displayName(uri: Uri): String? = try {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    } catch (e: Exception) {
+        null
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -291,6 +347,39 @@ class MainActivity : ComponentActivity() {
                     pickCallback = null
                     reply(cb, JSONObject().put("ok", false).put("error", "Galerie indisponible."))
                 }
+            }
+        }
+
+        /** Renvoie (une seule fois) le contenu partagé depuis WhatsApp, ou "". */
+        @JavascriptInterface
+        fun takeShared(): String {
+            val v = pendingShare ?: return ""
+            pendingShare = null
+            return v
+        }
+
+        /** Envoie une action au serveur en y joignant des photos (base64). */
+        @JavascriptInterface
+        fun apiWithPhotos(cb: String, body: String, photoIdsJson: String) {
+            io.execute {
+                val ctx = this@MainActivity
+                val res = try {
+                    val req = JSONObject(body).put("key", APP_KEY).put("who", Session.name(ctx))
+                    val ids = JSONArray(photoIdsJson)
+                    val photos = JSONArray()
+                    for (i in 0 until ids.length()) {
+                        PhotoStore.base64(ctx, ids.getString(i))?.let { photos.put(JSONObject().put("b64", it)) }
+                    }
+                    req.put("photos", photos)
+                    Api.post(Session.serverUrl(ctx), req.toString())
+                } catch (e: IOException) {
+                    JSONObject().put("ok", false).put("network", true).put("error", "Pas de connexion internet.")
+                } catch (e: ServerException) {
+                    JSONObject().put("ok", false).put("code", e.code).put("error", e.message)
+                } catch (e: Exception) {
+                    JSONObject().put("ok", false).put("error", e.message ?: "Erreur")
+                }
+                reply(cb, res)
             }
         }
 

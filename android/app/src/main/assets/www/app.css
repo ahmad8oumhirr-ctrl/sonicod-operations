@@ -136,11 +136,11 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:38px;backgrou
 .note.info{background:var(--soft)}
 
 /* ---------- barre du bas ---------- */
-.nav{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--nav);border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(4,1fr);
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--nav);border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr);
   padding:6px 6px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -4px 20px rgba(40,10,60,.06)}
 .nav button{border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;color:var(--muted);font-size:11px;font-weight:700;border-radius:14px;min-width:0}
 .nav button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.nav button svg{width:24px;height:24px;padding:3px 16px;box-sizing:content-box;border-radius:14px;transition:.2s}
+.nav button svg{width:24px;height:24px;padding:3px 12px;box-sizing:content-box;border-radius:14px;transition:.2s}
 .nav button.on{color:var(--accent)}
 .nav button.on svg{background:var(--soft);color:var(--accent-2)}
 
@@ -188,3 +188,7 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:38px;backgrou
 .success-ic.run{background:var(--violet)}
 .success-ic.run .spin{width:30px;height:30px;border-width:4px}
 .success-ic.err{background:var(--red);font-size:34px;font-weight:900}
+
+.pend-item .right{text-align:right}
+.btn-recv{background:var(--green);color:#fff}
+.share-box{background:var(--soft);border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:12px;white-space:pre-wrap;max-height:120px;overflow:auto}

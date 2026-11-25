@@ -25,6 +25,9 @@ var RETOUR_SHEET = 'Gestion Roteur';
 var RETOUR_HEADER_ROW = 3;              // ligne "Traking | La Date"
 var RETOUR_FIRST_ROW = 4;
 
+var PENDING_SHEET = 'Retours en attente';
+var PENDING_HEADER = ['DATE ANNONCE', 'VILLE / LIVREUR', 'COLIS', 'STATUT', 'DATE RÉCEPTION', 'NOTE', 'PHOTOS', 'PAR', 'RÉF'];
+
 var PHOTO_FOLDER_NAME = 'SONICOD – Photos opérations';
 var WHATSAPP_GROUP = 'https://chat.whatsapp.com/LP2gQjIm7R95AYBLIj27Ad';
 var MAX_PHOTOS = 10;
@@ -56,6 +59,9 @@ function doPost(e) {
       case 'addCity': data = addCity_(req.city); break;
       case 'submit':  data = submit_(req.op, req.photos, req.who); break;
       case 'scan':    data = scan_(req); break;
+      case 'addPending':     data = addPending_(req); break;
+      case 'listPending':    data = listPending_(); break;
+      case 'receivePending': data = receivePending_(req); break;
       default: throw new AppError('Action inconnue.');
     }
     return json_({ ok: true, data: data });
@@ -149,7 +155,7 @@ function remember_(id, value) {
   value.t = Date.now();
   props.setProperty(id, JSON.stringify(value));
   var all = props.getProperties();
-  var keys = Object.keys(all).filter(function (k) { return k.indexOf('op_') === 0 || k.indexOf('sc_') === 0; });
+  var keys = Object.keys(all).filter(function (k) { return k.indexOf('op_') === 0 || k.indexOf('sc_') === 0 || k.indexOf('pd_') === 0; });
   if (keys.length < 4000) return;
   var limit = Date.now() - 30 * 86400000;
   keys.forEach(function (k) {
@@ -368,6 +374,90 @@ function scan_(req) {
   });
 }
 
+/* ============================== 3) RETOURS EN ATTENTE (annoncés dans WhatsApp) ============================== */
+
+function pendingSheet_() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sh = ss.getSheetByName(PENDING_SHEET);
+  if (sh) return sh;
+  sh = ss.insertSheet(PENDING_SHEET);
+  sh.getRange(1, 1, 1, PENDING_HEADER.length).setValues([PENDING_HEADER])
+    .setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#6E2B92').setHorizontalAlignment('center');
+  sh.setFrozenRows(1);
+  sh.setColumnWidths(1, PENDING_HEADER.length, 130);
+  sh.setColumnWidth(6, 260);
+  sh.hideColumns(9);
+  return sh;
+}
+
+function addPending_(req) {
+  var pid = String(req.pid || '');
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(pid)) throw new AppError('Identifiant invalide.');
+  var livreur = String(req.livreur || '').trim();
+  if (!livreur) throw new AppError('Choisissez la ville / le livreur.');
+  var colis = Number(req.colis);
+  if (!(colis > 0) || Math.floor(colis) !== colis) throw new AppError('Le nombre de colis doit être un nombre entier positif.');
+  var d = parseIsoDate_(req.date, 'Date');
+  var note = String(req.note || '').trim().slice(0, 1000);
+  var who = String(req.who || '').trim().slice(0, 30);
+  var photos = Array.isArray(req.photos) ? req.photos.slice(0, MAX_PHOTOS) : [];
+
+  return withLock_(function () {
+    var prev = seen_('pd_' + pid);
+    if (prev) return { row: prev.row, duplicate: true };
+    var links = [];
+    if (photos.length) {
+      var folder = monthFolder_(d);
+      var base = 'ATTENTE_' + Utilities.formatDate(d, TZ, 'yyyy-MM-dd') + '_' + livreur.replace(/[^\w-]+/g, '_') + '_' + pid.slice(0, 8);
+      photos.forEach(function (ph, i) {
+        if (!ph || !ph.b64) return;
+        var file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(ph.b64), 'image/jpeg', base + '_' + (i + 1) + '.jpg'));
+        try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+        links.push('https://drive.google.com/file/d/' + file.getId() + '/view');
+      });
+    }
+    var sh = pendingSheet_();
+    var r = sh.getLastRow() + 1;
+    sh.getRange(r, 1, 1, PENDING_HEADER.length).setValues([[d, livreur, colis, 'En attente', '', note, '', who, pid]]);
+    sh.getRange(r, 1).setNumberFormat('dd/MM/yyyy');
+    sh.getRange(r, 4).setBackground('#FFF4E0').setFontColor('#B45309').setFontWeight('bold');
+    setPhotosCell_(sh.getRange(r, 7), links, '');
+    remember_('pd_' + pid, { row: r });
+    return { row: r, duplicate: false };
+  });
+}
+
+function listPending_() {
+  var sh = pendingSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var vals = sh.getRange(2, 1, last - 1, PENDING_HEADER.length).getValues();
+  var out = [];
+  vals.forEach(function (v, i) {
+    if (String(v[3]).trim().toLowerCase() !== 'en attente') return;
+    out.push({
+      row: i + 2, pid: String(v[8]), date: v[0] instanceof Date ? Utilities.formatDate(v[0], TZ, 'yyyy-MM-dd') : String(v[0]),
+      livreur: String(v[1]), colis: Number(v[2]) || 0, note: String(v[5]), photos: String(v[6] || '').split('📷').length - 1
+    });
+  });
+  return out.reverse();
+}
+
+function receivePending_(req) {
+  return withLock_(function () {
+    var sh = pendingSheet_();
+    var r = Number(req.row);
+    if (!(r >= 2)) throw new AppError('Ligne invalide.');
+    var v = sh.getRange(r, 1, 1, PENDING_HEADER.length).getValues()[0];
+    if (String(v[8]) !== String(req.pid || '')) throw new AppError('La feuille a changé. Actualisez la liste.', 'conflict');
+    var dr = req.dateReception ? parseIsoDate_(req.dateReception, 'Date de réception') : new Date();
+    sh.getRange(r, 4, 1, 2).setValues([['Reçu', dr]]);
+    sh.getRange(r, 4).setBackground('#E7F7EE').setFontColor('#15803D');
+    sh.getRange(r, 5).setNumberFormat('dd/MM/yyyy');
+    return { row: r };
+  });
+}
+
 /* ============================== OUTILS ============================== */
 
 /** À lancer une fois depuis l'éditeur : donne les autorisations et vérifie tout. */
@@ -376,5 +466,7 @@ function setup() {
   Logger.log('Opérations → prochaine ligne : ' + findTargetRow_(sh));
   sheet_(RETOUR_SHEET);
   Logger.log('Onglet Gestion Roteur OK');
+  pendingSheet_();
+  Logger.log('Onglet Retours en attente OK');
   Logger.log('Dossier photos : ' + photoFolder_().getUrl());
 }
