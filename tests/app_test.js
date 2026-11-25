@@ -20,10 +20,19 @@ const getJson = url => new Promise((res, rej) => http.get(url, r => { let d = ''
   await new Promise(r => ws.on('open', r));
   let id = 0; const pending = {};
   ws.on('message', m => { const d = JSON.parse(m); if (d.id && pending[d.id]) { pending[d.id](d); delete pending[d.id]; } if (d.method === 'Runtime.exceptionThrown') log('EXCEPTION JS', d.params.exceptionDetails.text, d.params.exceptionDetails.exception && d.params.exceptionDetails.exception.description); if (d.method === 'Runtime.consoleAPICalled' && d.params.type === 'error') log('console.error', d.params.args.map(a => a.value || a.description).join(' ')); });
-  const send = (method, params = {}) => new Promise(r => { const i = ++id; pending[i] = r; ws.send(JSON.stringify({ id: i, method, params })); });
+  const send = (method, params = {}) => new Promise(r => {
+    const i = ++id; pending[i] = r; ws.send(JSON.stringify({ id: i, method, params }));
+    setTimeout(() => { if (pending[i]) { delete pending[i]; log('DÉLAI DÉPASSÉ: ' + method); r({ result: { result: { value: null } } }); } }, 25000);
+  });
   await send('Runtime.enable');
+  await send('Page.enable');
   const js = async expr => { const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.result.exceptionDetails) return 'ERREUR: ' + (r.result.exceptionDetails.exception || {}).description; return r.result.result.value; };
-  const shot = async n => { await wait(900); const r = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${OUT}/${n}.png`, Buffer.from(r.result.data, 'base64')); };
+  const shot = async n => {
+    await wait(900);
+    const r = await send('Page.captureScreenshot', { format: 'png' });
+    if (r.result && r.result.data) fs.writeFileSync(`${OUT}/${n}.png`, Buffer.from(r.result.data, 'base64'));
+    else require('child_process').execSync(`adb exec-out screencap -p > ${OUT}/${n}.png`);
+  };
   const click = sel => js(`(function(){var e=document.querySelector(${JSON.stringify(sel)}); if(!e) return 'absent: ${sel}'; e.click(); return 'ok';})()`);
   const setVal = (sel, v) => js(`(function(){var e=document.querySelector(${JSON.stringify(sel)}); if(!e) return 'absent'; e.value=${JSON.stringify(v)}; e.dispatchEvent(new Event('input')); e.dispatchEvent(new Event('change')); return 'ok';})()`);
   const toast = () => js(`document.querySelector('#toast').textContent`);
