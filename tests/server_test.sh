@@ -19,3 +19,10 @@ call "{\"action\":\"scan\",\"key\":\"$KEY\",\"tracking\":\"TESTSRV$(date +%s)\",
 echo "== lecture étiquette (OCR)"
 LB=$(base64 -w0 label.jpg)
 call "{\"action\":\"ocrLabel\",\"key\":\"$KEY\",\"b64\":\"$LB\"}"
+echo "== retour en attente (ajout)"
+PID="test-$(date +%s)"
+call "{\"action\":\"addPending\",\"key\":\"$KEY\",\"pid\":\"$PID\",\"livreur\":\"CASA\",\"colis\":3,\"date\":\"$D2\",\"note\":\"TEST CLAUDE – A SUPPRIMER\",\"photos\":[{\"b64\":\"$IMG\"}],\"files\":[{\"b64\":\"JVBERi0xLjQK\",\"name\":\"TEST-BRV.pdf\"}]}"
+echo "== retour en attente (complément même groupe/jour)"
+call "{\"action\":\"addPending\",\"key\":\"$KEY\",\"pid\":\"$PID\",\"livreur\":\"CASA\",\"colis\":4,\"date\":\"$D2\",\"photos\":[{\"b64\":\"$IMG\"}]}"
+echo "== liste"
+call "{\"action\":\"listPending\",\"key\":\"$KEY\"}" | head -c 1500; echo

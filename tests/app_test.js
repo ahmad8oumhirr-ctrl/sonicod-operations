@@ -66,19 +66,25 @@ const getJson = url => new Promise((res, rej) => http.get(url, r => { let d = ''
   log('SCAN 1:', await lastScan());
   await setVal('#manual', code); await click('#manualB'); await wait(1500);
   log('SCAN 2 (doublon attendu):', await lastScan());
-  log('Lot en cours:', await js(`document.querySelector('#sessN').textContent`));
-  await click('#lotSend'); await wait(500); log('Envoi lot sans photo →', await toast());
+  log('Colis du lot:', await js(`document.querySelector('#sessN').textContent`));
+  log('Bouton Terminer actif:', await js(`!document.querySelector('#finishB').disabled`));
   await shot('05_scanner');
+
+  // Retours des groupes (En attente)
+  await click('.nav [data-go="attente"]');
+  for (let i = 0; i < 20; i++) { await wait(1000); const t = await js(`document.querySelector('#topSub').textContent`); if (/attente|bot/.test(t)) break; }
+  log('EN ATTENTE:', await js(`document.querySelector('#topSub').textContent + ' | ' + (document.querySelector('#pList')||{}).innerText.slice(0,300)`));
+  await shot('06_en_attente');
 
   // Retour Sorties
   await click('.nav [data-go="sorties"]'); await wait(500);
   await click('#soSend'); await wait(400); log('Retour Sorties sans photo →', await toast());
-  await shot('06_retour_sorties');
+  await shot('07_retour_sorties');
 
   // Mode sombre
   await click('.nav [data-go="settings"]'); await wait(300); await click('#themes .chip:nth-child(3)');
-  await click('.nav [data-go="op"]'); await shot('07_sombre_operation');
-  await click('.nav [data-go="scan"]'); await shot('08_sombre_scanner');
+  await click('.nav [data-go="op"]'); await shot('08_sombre_operation');
+  await click('.nav [data-go="scan"]'); await shot('09_sombre_scanner');
   await click('.nav [data-go="settings"]'); await wait(300); await click('#themes .chip:nth-child(1)');
   log('FIN DU TEST');
   ws.close(); process.exit(0);
