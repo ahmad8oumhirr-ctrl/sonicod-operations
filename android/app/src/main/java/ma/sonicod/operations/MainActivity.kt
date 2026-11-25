@@ -84,6 +84,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Scanner intégré (ScanActivity) ; si la caméra échoue → scanner Google en secours. */
+    private var scanCallback: String? = null
+    private val scanLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val cb = scanCallback ?: return@registerForActivityResult
+        scanCallback = null
+        val v = res.data?.getStringExtra("value")
+        when {
+            res.resultCode == RESULT_OK && !v.isNullOrBlank() -> reply(cb, JSONObject().put("ok", true).put("value", v))
+            res.resultCode == RESULT_FIRST_USER -> gmsScan(cb, res.data?.getStringExtra("error"))
+            else -> reply(cb, JSONObject().put("ok", false).put("cancelled", true))
+        }
+    }
+
+    private fun gmsScan(cb: String, firstError: String?) {
+        try {
+            val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_ALL_FORMATS).enableAutoZoom().build()
+            GmsBarcodeScanning.getClient(this, options).startScan()
+                .addOnSuccessListener { b -> reply(cb, JSONObject().put("ok", true).put("value", b.rawValue ?: "")) }
+                .addOnCanceledListener { reply(cb, JSONObject().put("ok", false).put("cancelled", true)) }
+                .addOnFailureListener { reply(cb, JSONObject().put("ok", false).put("error", firstError ?: "Scanner indisponible – utilisez la saisie manuelle")) }
+        } catch (e: Exception) {
+            reply(cb, JSONObject().put("ok", false).put("error", firstError ?: "Scanner indisponible."))
+        }
+    }
+
+    /** La caméra doit être autorisée (l'app déclare CAMERA pour le scanner intégré) avant d'ouvrir l'appareil photo. */
+    private var afterCameraPerm: ((Boolean) -> Unit)? = null
+    private val cameraPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        val f = afterCameraPerm; afterCameraPerm = null; f?.invoke(ok)
+    }
+    private fun withCamera(f: (Boolean) -> Unit) {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) f(true)
+        else { afterCameraPerm = f; cameraPerm.launch(android.Manifest.permission.CAMERA) }
+    }
+
     /** Android 8–10 : autorisation de lire le dossier WhatsApp (bot téléphone). */
     private val storagePerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         webView.evaluateJavascript("window.sonicodBotRefresh && window.sonicodBotRefresh()", null)
@@ -287,22 +322,11 @@ class MainActivity : ComponentActivity() {
         fun scanBarcode(cb: String) {
             runOnUiThread {
                 try {
-                    val options = GmsBarcodeScannerOptions.Builder()
-                        .setBarcodeFormats(Barcode.FORMAT_ALL_FORMATS)
-                        .enableAutoZoom()
-                        .build()
-                    GmsBarcodeScanning.getClient(this@MainActivity, options).startScan()
-                        .addOnSuccessListener { barcode ->
-                            reply(cb, JSONObject().put("ok", true).put("value", barcode.rawValue ?: ""))
-                        }
-                        .addOnCanceledListener {
-                            reply(cb, JSONObject().put("ok", false).put("cancelled", true))
-                        }
-                        .addOnFailureListener { e ->
-                            reply(cb, JSONObject().put("ok", false).put("error", "Scanner indisponible : " + (e.message ?: "")))
-                        }
+                    scanCallback = cb
+                    scanLauncher.launch(Intent(this@MainActivity, ScanActivity::class.java))
                 } catch (e: Exception) {
-                    reply(cb, JSONObject().put("ok", false).put("error", "Scanner indisponible."))
+                    scanCallback = null
+                    gmsScan(cb, null)
                 }
             }
         }
@@ -348,7 +372,8 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun takePhoto(cb: String) {
-            runOnUiThread {
+            runOnUiThread { withCamera { granted ->
+                if (!granted) { reply(cb, JSONObject().put("ok", false).put("error", "Autorisez la caméra.")); return@withCamera }
                 try {
                     val dir = File(cacheDir, "camera").apply { mkdirs() }
                     val f = File(dir, UUID.randomUUID().toString() + ".jpg")
@@ -360,7 +385,7 @@ class MainActivity : ComponentActivity() {
                     cameraCallback = null
                     reply(cb, JSONObject().put("ok", false).put("error", "Caméra indisponible."))
                 }
-            }
+            } }
         }
 
         @JavascriptInterface

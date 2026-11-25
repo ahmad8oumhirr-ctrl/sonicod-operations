@@ -11,8 +11,8 @@ android {
         applicationId = "ma.sonicod.operations"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "4.5.0"
+        versionCode = 19
+        versionName = "4.6.0"
     }
 
     signingConfigs {
@@ -59,4 +59,8 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
 }
