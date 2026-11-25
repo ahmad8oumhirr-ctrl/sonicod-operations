@@ -25,11 +25,24 @@
   const log = s => { logLines.push(s); const el = $('#snc-log'); if (el) el.textContent = logLines.slice(-12).join('\n'); };
 
   /* ---------------- WhatsApp Web : lecture du chat ouvert ---------------- */
+  /** Liste des membres affichée sous le nom du groupe (« Aicha, Mohamed, …, You ») : ce n'est PAS le nom. */
+  function looksLikeMembers(s) {
+    s = String(s || '').trim();
+    if (s.indexOf(',') < 0) return false;
+    return /(^|,\s*)(You|Vous|Toi|أنت)\s*$/i.test(s) || s.split(',').length >= 4;
+  }
+  const normName = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   function chatName() {
+    // 1) le groupe sélectionné dans la liste de gauche (le plus fiable)
+    const sel = $('#pane-side [aria-selected="true"] span[title]');
+    if (sel) { const v = (sel.getAttribute('title') || '').trim(); if (v && !looksLikeMembers(v)) return v; }
+    // 2) l'en-tête du chat, sans la ligne des membres / « en ligne » / « cliquez ici »
     const h = $('#main header');
     if (!h) return '';
-    const t = h.querySelector('span[title]') || h.querySelector('span[dir="auto"]');
-    return t ? (t.getAttribute('title') || t.textContent || '').trim() : '';
+    const c = Array.from(h.querySelectorAll('span[title], span[dir="auto"]'))
+      .map(e => (e.getAttribute('title') || e.textContent || '').trim())
+      .filter(t => t && !looksLikeMembers(t) && !/^(en ligne|online|en train|typing|cliquez|click here|tap here|vu |last seen)/i.test(t));
+    return c[0] || '';
   }
 
   /** Clé de jour d'un séparateur de date (« AUJOURD'HUI », « HIER », « 23/11/2026 »…). */
@@ -122,54 +135,76 @@
     return '';
   }
 
-  /** Analyse le chat ouvert : photos du jour + bon PDF + nombre de colis (étiquettes). */
-  async function analyseOpenChat(dayIso) {
+  /** Étape 1 (rapide, chat ouvert) : photos du jour + bon PDF. La lecture des étiquettes se fait après. */
+  async function collectOpenChat(dayIso) {
     const group = chatName();
-    if (!group) { log('Ouvrez d\'abord un groupe dans WhatsApp.'); return 0; }
+    if (!group) { log('Ouvrez d\'abord un groupe dans WhatsApp.'); return null; }
     const groups = (await store.get('groups')) || {};
     const { imgs, docs } = collectDay(dayIso);
-    if (!imgs.length && !docs.length) { log(group + ' : rien pour ce jour.'); return 0; }
-    const rec = { key: group + '|' + dayIso, group, day: dayIso, colis: null, brvs: {}, zone: '', photos: [], labels: [], docs: [], livreur: groups[group] || '', checked: true, status: '', photoHashes: [] };
+    if (!imgs.length && !docs.length) { log(group + ' : rien pour ' + fmt(dayIso) + '.'); return null; }
+    const rec = { key: group + '|' + dayIso, group, day: dayIso, colis: null, brvs: {}, zone: '', photos: [], labels: [], docs: [], raw: [], livreur: groups[group] || '', checked: true, status: '', photoHashes: [] };
     results = results.filter(r => r.key !== rec.key);
     results.push(rec);
-    // Photos : on garde tout (max 10) et on lit les étiquettes
     for (let i = 0; i < imgs.length && i < 15; i++) {
-      log(group + ' : photo ' + (i + 1) + '/' + imgs.length + '…');
       let b64;
-      try { b64 = imgToB64(imgs[i]); } catch (e) { log('Photo illisible'); continue; }
+      try { b64 = imgToB64(imgs[i]); } catch (e) { continue; }
       const ph = hash(b64.slice(0, 4000) + b64.length);
-      const cache = (await store.get('ocr')) || {};
-      let r = cache[ph] ? { ok: true, data: cache[ph] } : await api({ action: 'ocrLabel', b64 });
-      if (r.ok && !cache[ph]) {
-        cache[ph] = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone };
-        const keys = Object.keys(cache); if (keys.length > 400) keys.slice(0, 100).forEach(k => delete cache[k]);
-        await store.set('ocr', cache);
-      }
-      const isLabel = r.ok && r.data.colis != null;
-      if (isLabel) {
-        const d = r.data, k = d.brv || ('n' + d.colis);
-        rec.brvs[k] = Math.max(rec.brvs[k] || 0, d.colis);
-        if (d.zone && !rec.zone) rec.zone = d.zone;
-        rec.labels.push(b64);
-      } else if (!r.ok && r.network) { log('Serveur injoignable'); break; }
+      rec.raw.push({ b64, ph });
       if (rec.photos.length < 10) { rec.photos.push(b64); rec.photoHashes.push(ph); }
-      rec.colis = Object.keys(rec.brvs).length ? Object.values(rec.brvs).reduce((a, b) => a + b, 0) : null;
-      if (!rec.livreur) rec.livreur = guessCity(group, rec.zone, groups);
-      renderResults();
     }
-    // Bon(s) PDF
     for (const d of docs.slice(0, 3)) {
-      log(group + ' : lecture du bon ' + d.name + '…');
       const b64 = await capturePdf(d.el);
       if (b64) rec.docs.push({ name: d.name, b64 });
       else log('PDF non récupéré : ' + d.name + ' (téléchargez-le une fois dans WhatsApp puis relancez)');
-      await wait(600);
+      await wait(400);
       const viewerClose = $('[data-icon="x-viewer"], [aria-label="Fermer"], [aria-label="Close"]');
       if (viewerClose) fireClick(viewerClose.closest('[role="button"]') || viewerClose);
-      renderResults();
     }
-    log(group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF, ' + (rec.colis == null ? 'colis non lus' : rec.colis + ' colis') + '.');
+    renderResults();
+    return rec;
+  }
+
+  /** Étape 2 (en arrière-plan) : lit les étiquettes (3 à la fois) puis envoie au Sheet. */
+  async function processRecord(rec) {
+    const cache = (await store.get('ocr')) || {};
+    const fresh = {};
+    let idx = 0, offline = false;
+    const worker = async () => {
+      while (idx < rec.raw.length && !offline) {
+        const { b64, ph } = rec.raw[idx++];
+        let d = cache[ph];
+        if (!d) {
+          const r = await api({ action: 'ocrLabel', b64 });
+          if (r.ok) { d = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone }; fresh[ph] = d; }
+          else if (r.network) { offline = true; log('Serveur injoignable'); }
+        }
+        if (d && d.colis != null) {
+          const k = d.brv || ('n' + d.colis);
+          rec.brvs[k] = Math.max(rec.brvs[k] || 0, d.colis);
+          if (d.zone && !rec.zone) rec.zone = d.zone;
+        }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    if (Object.keys(fresh).length) {
+      const c2 = (await store.get('ocr')) || {};
+      Object.assign(c2, fresh);
+      const keys = Object.keys(c2); if (keys.length > 500) keys.slice(0, keys.length - 400).forEach(k => delete c2[k]);
+      await store.set('ocr', c2);
+    }
+    delete rec.raw;
+    rec.colis = Object.keys(rec.brvs).length ? Object.values(rec.brvs).reduce((a, b) => a + b, 0) : null;
+    if (!rec.livreur) rec.livreur = guessCity(rec.group, rec.zone, (await store.get('groups')) || {});
+    log(rec.group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF, ' + (rec.colis == null ? 'colis non lus' : rec.colis + ' colis') + '.');
     await sendRecord(rec);                      // envoi automatique au Google Sheet
+    return rec;
+  }
+
+  /** Lire le groupe ouvert. */
+  async function analyseOpenChat(dayIso) {
+    const rec = await collectOpenChat(dayIso);
+    if (!rec) return 0;
+    await processRecord(rec);
     return 1;
   }
 
@@ -178,7 +213,7 @@
     ['mousedown', 'mouseup', 'click'].forEach(t => el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })));
   }
   function findChatInList(name) {
-    const span = $$('#pane-side span[title]').find(s => s.getAttribute('title') === name);
+    const span = $$('#pane-side span[title]').find(s => normName(s.getAttribute('title')) === normName(name));
     return span ? (span.closest('[role="listitem"]') || span.closest('[role="row"]') || span.closest('div[tabindex]') || span) : null;
   }
   async function openChat(name) {
@@ -195,11 +230,17 @@
     }
     if (!el) return false;
     fireClick(el);
-    for (let i = 0; i < 20; i++) { await wait(300); if (chatName() === name) break; }
-    await wait(1500);                                   // chargement des messages / photos
+    for (let i = 0; i < 25; i++) { await wait(200); if (normName(chatName()) === normName(name)) break; }
+    // attendre que les messages et les photos du chat soient affichés (stable 2 fois de suite)
+    let last = -1, stable = 0;
+    for (let i = 0; i < 16 && stable < 2; i++) {
+      await wait(250);
+      const n = $$('#main [role="row"]').length * 100 + $$('#main img[src^="blob:"]').length;
+      stable = (n === last && n > 0) ? stable + 1 : 0; last = n;
+    }
     const box = $('#side div[contenteditable="true"]');
     if (box && box.textContent) { box.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); }
-    return chatName() === name;
+    return normName(chatName()) === normName(name);
   }
 
   /* ---------------- panneau ---------------- */
@@ -270,7 +311,7 @@
       busy(true); await analyseOpenChat(day); busy(false);
     };
     $('#snc-all').onclick = async () => {
-      busy(true); await runAll($('#snc-day').value || today); busy(false); renderPanel();
+      busy(true); results = []; await runAll([$('#snc-day').value || today]); busy(false); renderPanel();
     };
     const saveSched = async (sc) => { await store.set('sched', sc); chrome.runtime.sendMessage({ type: 'schedule', sched: sc }); };
     $('#snc-auto').onchange = async () => { sched.on = $('#snc-auto').checked; await store.set('lastSlot', Date.now()); await saveSched(sched); log(sched.on ? 'Programmation activée : ' + sched.times.join(', ') : 'Programmation arrêtée.'); };
@@ -346,12 +387,33 @@
 
   /** Lit tous les groupes enregistrés, pour un ou plusieurs jours (chaque groupe n'est ouvert qu'une fois). */
   async function runAll(days) {
+    if (!Array.isArray(days)) days = [days];
     const groups = (await store.get('groups')) || {};
-    for (const g of Object.keys(groups)) {
-      log('Ouverture : ' + g + '…');
-      if (await openChat(g)) { for (const d of days) await analyseOpenChat(d); }
-      else log('Groupe introuvable : ' + g);
+    const names = Object.keys(groups);
+    const t0 = Date.now();
+    const jobs = [];
+    let active = 0, found = 0;
+    const missing = [];
+    for (let i = 0; i < names.length; i++) {
+      const g = names[i];
+      log('(' + (i + 1) + '/' + names.length + ') ' + g);
+      if (await openChat(g)) {
+        for (const d of days) {
+          const rec = await collectOpenChat(d);
+          if (!rec) continue;
+          found++;
+          // lecture des étiquettes + envoi en arrière-plan pendant qu'on ouvre le groupe suivant
+          active++;
+          jobs.push(processRecord(rec).catch(e => log('Erreur ' + g + ' : ' + e.message)).finally(() => { active--; }));
+          while (active >= 4) await wait(300);
+        }
+      } else missing.push(g);
     }
+    if (active) log('Envoi au Sheet des derniers groupes…');
+    await Promise.all(jobs);
+    const ok = results.filter(r => r.status === 'ok').length;
+    log('✓ Terminé en ' + Math.round((Date.now() - t0) / 1000) + ' s : ' + names.length + ' groupes lus, ' + found + ' retour(s) trouvés, ' + ok + ' à jour dans le Sheet.' +
+      (missing.length ? '\n⚠ Introuvables : ' + missing.join(', ') : ''));
     await store.set('lastRun', new Date().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
   }
 
@@ -395,6 +457,15 @@
     const c = await api({ action: 'config' });
     if (c.ok) cities = c.data.cities || [];
     else log('Serveur : ' + (c.error || 'injoignable'));
+    if (!cities.length) cities = ['Agadir', 'BENI MELAL', 'CASA', 'Chtouka', 'EL JADIDA', 'ERRACHIDIA', 'FES', 'IBEX SUD', 'MARRAEKCH', 'OUARZAZAT', 'OUJDA', 'RABAT', 'SAFI', 'Sud', 'TANGER', 'taroudant'];
+    // groupes enregistrés par erreur avec la liste des membres au lieu du nom
+    const g0 = (await store.get('groups')) || {};
+    const bad = Object.keys(g0).filter(looksLikeMembers);
+    if (bad.length) {
+      bad.forEach(k => delete g0[k]);
+      await store.set('groups', g0);
+      log('⚠ ' + bad.length + ' groupe(s) mal enregistré(s) (liste des membres au lieu du nom) retiré(s). Ouvrez-le(s) et choisissez la ville à nouveau.');
+    }
     ui();
   }
   const t = setInterval(() => { if ($('#side') || $('#pane-side')) { clearInterval(t); start(); } }, 1500);
