@@ -19,14 +19,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
       - name: Build APK
         working-directory: android
         run: |
           set -o pipefail
+          { echo "ANDROID_HOME=$ANDROID_HOME"; java -version; ls "$ANDROID_HOME/platforms" || true; } > ../build.log 2>&1
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease 2>&1 | tee ../build.log
+          ./gradlew --no-daemon assembleRelease 2>&1 | tee -a ../build.log
           cp app/build/outputs/apk/release/app-release.apk ../SONICOD-Operations.apk
 
       - uses: actions/upload-artifact@v4
