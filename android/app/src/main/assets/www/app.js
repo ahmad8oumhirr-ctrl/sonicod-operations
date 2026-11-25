@@ -374,7 +374,7 @@
       '<div class="card center" id="saveStatus"></div>' +
       '<div class="card"><div class="sec"><b>Message WhatsApp</b></div><div class="msgbox">' + esc(text) + '</div>' +
       (L.photoIds.length ? '<p class="small muted">+ ' + L.photoIds.length + ' photo(s) jointe(s)</p>' : '') + '</div>' +
-      '<button class="btn btn-green" id="share">' + ic('wa') + 'Envoyer sur WhatsApp (photos + message)</button>' +
+      '<button class="btn btn-green" id="share">' + ic('wa') + 'Envoyer sur WhatsApp</button>' +
       '<div id="waNote"></div>' +
       '<div style="height:12px"></div>' +
       '<button class="btn btn-primary" id="again">' + ic('box') + ' Nouvelle opération</button>'
