@@ -472,7 +472,7 @@ class MainActivity : ComponentActivity() {
         fun shareWhatsApp(text: String, photoIdsJson: String, line1: String, line2: String): String {
             val ctx = this@MainActivity
             return try {
-                copyToClipboard(text)
+                if (text.isNotEmpty()) copyToClipboard(text)
                 val ids = JSONArray(photoIdsJson)
                 val n = ids.length()
                 val uris = ArrayList<Uri>()
@@ -497,7 +497,7 @@ class MainActivity : ComponentActivity() {
                     }
                     else -> Intent(Intent.ACTION_SEND).apply { type = "text/plain" }
                 }
-                intent.putExtra(Intent.EXTRA_TEXT, text)
+                if (text.isNotEmpty()) intent.putExtra(Intent.EXTRA_TEXT, text)
                 if (uris.isNotEmpty()) {
                     val clip = ClipData.newRawUri("photos", uris[0])
                     for (k in 1 until uris.size) clip.addItem(ClipData.Item(uris[k]))

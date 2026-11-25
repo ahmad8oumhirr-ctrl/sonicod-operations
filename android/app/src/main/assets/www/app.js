@@ -372,8 +372,10 @@
     setHeader('Opération', L.op.livreur + ' · ' + L.op.colis + ' colis');
     view(
       '<div class="card center" id="saveStatus"></div>' +
-      '<div class="card"><div class="sec"><b>Message WhatsApp</b></div><div class="msgbox">' + esc(text) + '</div>' +
-      (L.photoIds.length ? '<p class="small muted">+ ' + L.photoIds.length + ' photo(s) jointe(s)</p>' : '') + '</div>' +
+      (L.photoIds.length
+        ? '<div class="card"><div class="sec"><b>Photos pour WhatsApp</b><small>' + L.photoIds.length + '</small></div>' +
+          '<div class="photos">' + ((L.draft && L.draft.photos) || []).map(function (p, i) { return '<div class="ph"><img src="' + esc(p.thumb) + '" alt=""><span class="n">' + (i + 1) + '</span></div>'; }).join('') + '</div></div>'
+        : '') +
       '<button class="btn btn-green" id="share">' + ic('wa') + 'Envoyer sur WhatsApp</button>' +
       '<div id="waNote"></div>' +
       '<div style="height:12px"></div>' +
@@ -387,12 +389,12 @@
       var line2 = st + ' · ' + fmtDate(L.op.dateReception);
       $('#share').disabled = true; $('#share').innerHTML = '<i class="spin"></i> Préparation des photos…';
       setTimeout(function () {
-      var r = NATIVE.shareWhatsApp(text, JSON.stringify(L.photoIds), line1, line2);
+      var r = NATIVE.shareWhatsApp(L.photoIds.length ? '' : text, JSON.stringify(L.photoIds), line1, line2);
       $('#share').disabled = false; $('#share').innerHTML = ic('wa') + 'Envoyer sur WhatsApp';
       $('#waNote').innerHTML = r === 'error'
-        ? '<div class="note" style="margin-top:12px">Impossible d\'ouvrir le partage. Le message a été copié : ouvrez le groupe et collez-le.</div>'
+        ? '<div class="note" style="margin-top:12px">Impossible d\'ouvrir WhatsApp.</div>'
         : '<div class="note info" style="margin-top:12px">' + (r === 'whatsapp' ? 'WhatsApp est ouvert.' : 'Choisissez WhatsApp dans la liste.') +
-          ' Dans la liste « Envoyer à », choisissez le groupe <b>SONICOD</b> puis appuyez sur <b>Envoyer</b> ➤. Le message est aussi copié (à coller si besoin).</div>';
+          ' Choisissez le groupe <b>SONICOD</b> puis appuyez sur <b>Envoyer</b> ➤.</div>';
       }, 50);
     };
     $('#again').onclick = function () { go('op', {}, { replace: true }); };
@@ -623,11 +625,11 @@
     var text = 'SONICOD – RETOURS SCANNÉS\n\nDate: ' + fmtDate(date) + '\nColis: ' + n + '\n\n' + trackings.join('\n');
     var b = $('#lotSend'); b.disabled = true; b.innerHTML = '<i class="spin"></i> Préparation des photos…';
     setTimeout(function () {
-      var r = NATIVE.shareWhatsApp(text, JSON.stringify(photos.map(function (p) { return p.id; })),
+      var r = NATIVE.shareWhatsApp('', JSON.stringify(photos.map(function (p) { return p.id; })),
         'RETOURS SCANNÉS · ' + n + ' colis', 'Gestion Roteur · ' + fmtDate(date));
       b.disabled = false; b.innerHTML = ic('wa') + 'Envoyer au groupe WhatsApp';
       $('#lotOut').innerHTML = '<div class="note info" style="margin-top:12px">' + (r === 'error'
-        ? 'Impossible d\'ouvrir WhatsApp. Le message a été copié.'
+        ? 'Impossible d\'ouvrir WhatsApp.'
         : 'Dans WhatsApp, choisissez le groupe puis appuyez sur <b>Envoyer</b> ➤.') + '</div>' +
         '<button class="btn btn-primary" id="lotNew">' + ic('check') + 'C\'est envoyé – nouveau scan</button>';
       $('#lotNew').onclick = function () {
@@ -810,12 +812,12 @@
       var text = 'SONICOD – RETOUR SORTIES\n\nDate: ' + fmtDate(o.date) + '\nPhotos: ' + n + (o.note.trim() ? '\nNote: ' + o.note.trim() : '');
       var b = $('#soSend'); b.disabled = true; b.innerHTML = '<i class="spin"></i> Préparation des photos…';
       setTimeout(function () {
-        var r = NATIVE.shareWhatsApp(text, JSON.stringify(o.photos.map(function (p) { return p.id; })),
+        var r = NATIVE.shareWhatsApp('', JSON.stringify(o.photos.map(function (p) { return p.id; })),
           'RETOUR SORTIES · ' + fmtDate(o.date), 'SONICOD' + (o.note.trim() ? ' · ' + o.note.trim().slice(0, 40) : ''));
         b.disabled = false; b.innerHTML = ic('wa') + 'Envoyer sur WhatsApp';
         o.sent = true;
         $('#soNoteOut').innerHTML = '<div class="note info" style="margin-top:12px">' + (r === 'error'
-          ? 'Impossible d\'ouvrir le partage. Le message a été copié.'
+          ? 'Impossible d\'ouvrir WhatsApp.'
           : 'Dans la liste « Envoyer à », choisissez le groupe <b>Ramassage Sonicod</b> puis appuyez sur <b>Envoyer</b> ➤.') + '</div>' +
           '<button class="btn btn-ghost" id="soNew2">Nouvelle sortie</button>';
         $('#soNew2').onclick = function () { state.sortie = newSortie(); render(); };
