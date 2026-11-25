@@ -29,6 +29,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.webkit.WebViewAssetLoader
+import androidx.work.WorkManager
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -194,7 +195,7 @@ class MainActivity : ComponentActivity() {
         handleShare(intent)
         io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)); DocStore.cleanup(this) }
         if (OpQueue.list(this).isNotEmpty()) SyncWorker.schedule(this)
-        if (WaBot.isEnabled(this)) BotWorker.schedulePeriodic(this)
+        WorkManager.getInstance(this).cancelUniqueWork("wabot-periodic")   // ancien bot téléphone (retiré : bloqué par Play Protect)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -415,7 +416,7 @@ class MainActivity : ComponentActivity() {
         /** Renvoie (une seule fois) le contenu partagé depuis WhatsApp, ou "". */
         /* ---------- Bot WhatsApp du téléphone ---------- */
         @JavascriptInterface
-        fun botStatus(): String = WaBot.status(this@MainActivity).toString()
+        fun botStatusDisabled(): String = WaBot.status(this@MainActivity).toString()
 
         @JavascriptInterface
         fun botSetEnabled(on: Boolean) = WaBot.setEnabled(this@MainActivity, on)

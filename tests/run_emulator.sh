@@ -10,7 +10,6 @@ echo "PID=$PID" > $OUT/pid.txt
 adb forward tcp:9222 localabstract:webview_devtools_remote_$PID
 curl -s http://127.0.0.1:9222/json/list > $OUT/targets.json
 (cd tests && OUT=../$OUT timeout 600 node app_test.js) > $OUT/node.txt 2>&1
-(cd tests && OUT=../$OUT timeout 600 node bot_test.js) >> $OUT/node.txt 2>&1
 (cd tests && OUT=../$OUT timeout 300 node scan_test.js) >> $OUT/node.txt 2>&1
 adb exec-out screencap -p > $OUT/99_ecran_final.png
 adb logcat -d > $OUT/logcat_full.txt

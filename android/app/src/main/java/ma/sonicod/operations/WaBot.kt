@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
-import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Base64
 import androidx.core.content.ContextCompat
@@ -449,18 +448,6 @@ object WaBot {
         }
         log(ctx, "✓ $group → $ville " + (colis?.let { "$it colis" } ?: "colis ?") + " · +" + newImgs.size + " photo(s) · +" + newDocs.size + " PDF (ligne $lastRow)")
         return true
-    }
-}
-
-/** Reçoit les notifications de WhatsApp (seulement le groupe, l'heure et le type : 📷 / 📄). */
-class WaListener : NotificationListenerService() {
-    override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        if (sbn == null) return
-        try { WaBot.onNotification(applicationContext, sbn) } catch (e: Exception) {}
-    }
-
-    override fun onListenerConnected() {
-        try { activeNotifications?.forEach { WaBot.onNotification(applicationContext, it) } } catch (e: Exception) {}
     }
 }
 
