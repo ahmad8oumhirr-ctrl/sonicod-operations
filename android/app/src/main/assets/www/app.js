@@ -97,7 +97,6 @@
     history: [],
     scans: store('scans') || [],
     session: store('session') || [],
-    lot: store('lot'),
     rafale: store('rafale') !== false,
     scanning: false,
     sending: false
@@ -356,8 +355,7 @@
       '</div>' +
       '<div class="card"><div class="sec"><b>Message WhatsApp</b></div><div class="msgbox">' + esc(text) + '</div>' +
       (L.photoIds.length ? '<p class="small muted">+ ' + L.photoIds.length + ' photo(s) jointe(s)</p>' : '') + '</div>' +
-      '<button class="btn btn-green" id="share">' + ic('wa') + 'Partager sur WhatsApp</button>' +
-      '<button class="btn btn-outline" id="grp">Ouvrir le groupe SONICOD</button>' +
+      '<button class="btn btn-green" id="share">' + ic('wa') + 'Envoyer sur WhatsApp (photos + message)</button>' +
       '<div id="waNote"></div>' +
       '<div style="height:12px"></div>' +
       '<button class="btn btn-primary" id="again">' + ic('box') + ' Nouvelle opération</button>'
@@ -370,16 +368,12 @@
       $('#share').disabled = true; $('#share').innerHTML = '<i class="spin"></i> Préparation des photos…';
       setTimeout(function () {
       var r = NATIVE.shareWhatsApp(text, JSON.stringify(L.photoIds), line1, line2);
-      $('#share').disabled = false; $('#share').innerHTML = ic('wa') + 'Partager sur WhatsApp';
+      $('#share').disabled = false; $('#share').innerHTML = ic('wa') + 'Envoyer sur WhatsApp (photos + message)';
       $('#waNote').innerHTML = r === 'error'
         ? '<div class="note" style="margin-top:12px">Impossible d\'ouvrir le partage. Le message a été copié : ouvrez le groupe et collez-le.</div>'
         : '<div class="note info" style="margin-top:12px">' + (r === 'whatsapp' ? 'WhatsApp est ouvert.' : 'Choisissez WhatsApp dans la liste.') +
-          ' Sélectionnez le groupe <b>SONICOD</b>, vérifiez puis appuyez sur <b>Envoyer</b> dans WhatsApp. Le message est aussi copié (à coller si besoin).</div>';
+          ' Dans la liste « Envoyer à », choisissez le groupe <b>SONICOD</b> puis appuyez sur <b>Envoyer</b> ➤. Le message est aussi copié (à coller si besoin).</div>';
       }, 50);
-    };
-    $('#grp').onclick = function () {
-      if (NATIVE) { NATIVE.copyText(text); NATIVE.openWhatsAppGroup(); toast('Message copié – collez-le dans le groupe'); }
-      else window.open(GROUP_LINK, '_blank');
     };
     $('#again').onclick = function () { go('op', {}, { replace: true }); };
   };
@@ -393,7 +387,7 @@
   function normTracking(v) { return String(v || '').replace(/[\r\n\t ]+/g, '').toUpperCase(); }
 
   ROUTES.scan = function () {
-    if (state.lot && !state.lot.sent) { state.route = 'lot'; ROUTES.lot(); return; }
+    if (!state.lotPhotos) state.lotPhotos = store('lotPhotos') || [];
     setHeader('Scanner retours', 'Gestion Roteur · placement automatique');
     var today = todayIso();
     var todays = state.scans.filter(function (s) { return localDay(s.at) === today; });
@@ -401,9 +395,12 @@
     var dupN = todays.filter(function (s) { return s.status === 'dup'; }).length;
     view(
       '<button class="scan-btn" id="scanBtn">' + ic('scan') + '<span>SCANNER</span></button>' +
-      '<div class="card session" style="margin-top:14px"><div class="kv"><span><span class="lbl-s">Lot en cours</span><br><b class="big" id="sessN">' + sessionItems().length + '</b> <span class="muted">colis scannés</span></span>' +
-      '<button class="btn btn-primary btn-sm" id="saveLot"' + (sessionItems().length ? '' : ' disabled') + '>' + ic('check') + 'ENREGISTRER</button></div>' +
-      '<p class="small muted" style="margin:8px 0 0">Chaque colis est déjà ajouté dans Gestion Roteur. « Enregistrer » termine le lot pour prendre les photos et les envoyer au groupe.</p></div>' +
+      '<div class="card session" style="margin-top:14px">' +
+      '<div class="sec"><b>Lot en cours</b><small><b class="big" id="sessN">' + sessionItems().length + '</b> colis</small></div>' +
+      '<div class="photo-btns"><button type="button" class="pbtn" id="lotCam">' + ic('cam') + 'Photo des colis</button><button type="button" class="pbtn" id="lotGal">' + ic('img') + 'Choisir une photo</button></div>' +
+      '<div class="photos" id="lotPhotos"></div>' +
+      '<button class="btn btn-green" id="lotSend" style="margin-top:12px">' + ic('wa') + 'Envoyer le lot sur WhatsApp</button>' +
+      '<div id="lotOut"></div></div>' +
       '<div class="card" style="margin-top:14px"><label class="kv"><span><b>Scan en continu</b><br><span class="small muted">Le scanner se rouvre après chaque colis</span></span>' +
       '<span class="switch"><input type="checkbox" id="rafale"' + (state.rafale ? ' checked' : '') + '><span></span></span></label></div>' +
       '<div class="card"><div class="field"><label>Saisie manuelle / lecteur</label>' +
@@ -415,13 +412,12 @@
       '<div class="card"><div class="sec"><b>Derniers scans</b><small><button class="btn btn-ghost btn-sm" id="retryB">' + ic('sync') + 'Envoyer</button></small></div><div class="list" id="scanList">' + scanListHtml() + '</div></div>'
     );
     $('#scanBtn').onclick = function () { scanLoop(); };
-    $('#saveLot').onclick = function () {
-      var items = sessionItems();
-      if (!items.length) return;
-      state.lot = { date: todayIso(), trackings: items.map(function (x) { return x.tracking; }), photos: [], sent: false };
-      state.session = []; store('session', []); store('lot', state.lot);
-      go('lot', {}, { replace: true });
-    };
+    var saveLotPhotos = function () { store('lotPhotos', state.lotPhotos); };
+    var redraw = function () { renderPhotoGrid(state.lotPhotos, '#lotPhotos', '#lotPhotosCount', saveLotPhotos); };
+    redraw();
+    $('#lotCam').onclick = function () { addPhotosTo(state.lotPhotos, 'takePhoto', function () { saveLotPhotos(); redraw(); }); };
+    $('#lotGal').onclick = function () { addPhotosTo(state.lotPhotos, 'pickPhotos', function () { saveLotPhotos(); redraw(); }); };
+    $('#lotSend').onclick = function () { sendLot(); };
     $('#rafale').onchange = function () { state.rafale = this.checked; store('rafale', state.rafale); };
     var m = $('#manual');
     var addManual = function () { var v = m.value; m.value = ''; if (normTracking(v)) addTracking(v); m.focus(); };
@@ -456,7 +452,7 @@
       $('#okN').textContent = todays.filter(function (s) { return s.status === 'ok'; }).length;
       $('#dupN').textContent = todays.filter(function (s) { return s.status === 'dup'; }).length;
       var n = sessionItems().length;
-      $('#sessN').textContent = n; $('#saveLot').disabled = !n;
+      $('#sessN').textContent = n;
     }
     refreshSyncPill();
   }
@@ -569,56 +565,37 @@
   }
 
   /* ================= LOT SCANNÉ → PHOTOS → GROUPE ================= */
-  ROUTES.lot = function () {
-    var L = state.lot;
-    if (!L) { go('scan', {}, { replace: true }); return; }
-    var n = L.trackings.length;
-    var grp = (store('scanGroup') || GROUP_LINK);
-    setHeader('Lot enregistré', n + ' colis · ' + fmtDate(L.date));
-    view(
-      '<div class="card center"><div class="success-ic">' + ic('check') + '</div><b>' + n + ' colis enregistrés dans Gestion Roteur</b>' +
-      '<p class="small muted">Prenez maintenant les photos du lot et envoyez-les au groupe.</p></div>' +
-      '<div class="card"><div class="sec"><span class="num">1</span><b>Photos du lot</b><small id="lotCount"></small></div>' +
-      '<div class="photo-btns"><button type="button" class="pbtn" id="lotCam">' + ic('cam') + 'Prendre une photo</button><button type="button" class="pbtn" id="lotGal">' + ic('img') + 'Choisir une photo</button></div>' +
-      '<div class="photos" id="lotPhotos"></div></div>' +
-      '<div class="card"><div class="sec"><span class="num">2</span><b>Trackings</b><small>' + n + '</small></div>' +
-      '<div class="msgbox mono" style="max-height:160px;overflow:auto">' + esc(L.trackings.join('\n')) + '</div></div>' +
-      '<button class="btn btn-green" id="lotSend">' + ic('wa') + 'Envoyer au groupe WhatsApp</button>' +
-      (grp ? '<button class="btn btn-outline" id="lotGrp">' + ic('wa') + 'Ouvrir le groupe</button>'
-           : '<p class="small muted center">Ajoutez le lien du groupe « Scanner retours » dans Paramètres.</p>') +
-      '<div id="lotOut"></div>' +
-      '<button class="btn btn-ghost" id="lotNew">' + ic('scan') + 'Nouveau lot</button>'
-    );
-    renderPhotoGrid(L.photos, '#lotPhotos', '#lotCount', function () { store('lot', L); });
-    $('#lotCam').onclick = function () { addPhotosTo(L.photos, 'takePhoto', function () { store('lot', L); renderPhotoGrid(L.photos, '#lotPhotos', '#lotCount', function () { store('lot', L); }); }); };
-    $('#lotGal').onclick = function () { addPhotosTo(L.photos, 'pickPhotos', function () { store('lot', L); renderPhotoGrid(L.photos, '#lotPhotos', '#lotCount', function () { store('lot', L); }); }); };
-    var gb = $('#lotGrp'); if (gb) gb.onclick = function () { openGroup(grp); };
-    $('#lotNew').onclick = function () {
-      var go2 = function () { state.lot = null; store('lot', null); go('scan', {}, { replace: true }); };
-      if (!L.sent && L.photos.length) confirmBox('Nouveau lot ?', 'Les photos de ce lot n\'ont pas été envoyées.', 'Continuer').then(function (ok) { if (ok) go2(); });
-      else go2();
-    };
-    $('#lotSend').onclick = function () {
-      if (!L.photos.length) { toast('Ajoutez au moins une photo', 'err'); return; }
-      if (!NATIVE) { toast('Disponible dans l\'application Android', 'err'); return; }
-      var text = 'SONICOD – RETOURS SCANNÉS\n\nDate: ' + fmtDate(L.date) + '\nColis: ' + n + '\n\n' + L.trackings.join('\n');
-      var b = $('#lotSend'); b.disabled = true; b.innerHTML = '<i class="spin"></i> Préparation des photos…';
-      setTimeout(function () {
-        var r = NATIVE.shareWhatsApp(text, JSON.stringify(L.photos.map(function (p) { return p.id; })),
-          'RETOURS SCANNÉS · ' + n + ' colis', 'Gestion Roteur · ' + fmtDate(L.date));
-        b.disabled = false; b.innerHTML = ic('wa') + 'Envoyer au groupe WhatsApp';
-        L.sent = true; store('lot', L);
-        $('#lotOut').innerHTML = '<div class="note info" style="margin-top:12px">' + (r === 'error'
-          ? 'Impossible d\'ouvrir le partage. Le message a été copié.'
-          : 'WhatsApp est ouvert : choisissez le groupe, vérifiez puis appuyez sur <b>Envoyer</b>.') + '</div>';
-      }, 50);
-    };
-  };
+  /** Envoie le lot scanné (photos avec bandeau + liste des trackings) sur WhatsApp. */
+  function sendLot() {
+    var items = sessionItems();
+    var photos = state.lotPhotos || [];
+    if (!items.length) { toast('Scannez d\'abord les colis', 'err'); return; }
+    if (!photos.length) { toast('Prenez au moins une photo des colis', 'err'); return; }
+    if (!NATIVE) { toast('Disponible dans l\'application Android', 'err'); return; }
+    var n = items.length, date = todayIso();
+    var trackings = items.map(function (x) { return x.tracking; }).reverse();
+    var text = 'SONICOD – RETOURS SCANNÉS\n\nDate: ' + fmtDate(date) + '\nColis: ' + n + '\n\n' + trackings.join('\n');
+    var b = $('#lotSend'); b.disabled = true; b.innerHTML = '<i class="spin"></i> Préparation des photos…';
+    setTimeout(function () {
+      var r = NATIVE.shareWhatsApp(text, JSON.stringify(photos.map(function (p) { return p.id; })),
+        'RETOURS SCANNÉS · ' + n + ' colis', 'Gestion Roteur · ' + fmtDate(date));
+      b.disabled = false; b.innerHTML = ic('wa') + 'Envoyer le lot sur WhatsApp';
+      $('#lotOut').innerHTML = '<div class="note info" style="margin-top:12px">' + (r === 'error'
+        ? 'Impossible d\'ouvrir WhatsApp. Le message a été copié.'
+        : 'Dans la liste « Envoyer à », choisissez le groupe puis appuyez sur <b>Envoyer</b> ➤.') + '</div>' +
+        '<button class="btn btn-primary" id="lotNew">' + ic('check') + 'Lot envoyé – commencer un nouveau lot</button>';
+      $('#lotNew').onclick = function () {
+        state.session = []; store('session', []);
+        state.lotPhotos = []; store('lotPhotos', []);
+        render(); toast('Nouveau lot ✓', 'ok');
+      };
+    }, 50);
+  }
 
   /** Grille de photos réutilisable (aperçu + suppression). */
   function renderPhotoGrid(list, boxSel, countSel, onChange) {
     var box = $(boxSel); if (!box) return;
-    $(countSel).textContent = list.length ? list.length + ' photo(s)' : '';
+    var cEl = $(countSel); if (cEl) cEl.textContent = list.length ? list.length + ' photo(s)' : '';
     box.innerHTML = list.map(function (p, i) {
       return '<div class="ph"><img src="' + esc(p.thumb) + '" alt=""><span class="n">' + (i + 1) + '</span><button type="button" class="x" data-i="' + i + '">✕</button></div>';
     }).join('');
@@ -644,10 +621,9 @@
   function newSortie() { return { date: todayIso(), note: '', photos: [], sent: false }; }
 
   ROUTES.sorties = function () {
-    setHeader('Retour Sorties', 'Photos avec la date → groupe WhatsApp');
+    setHeader('Retour Sorties', 'Photos avec la date → Ramassage Sonicod');
     if (!state.sortie) state.sortie = newSortie();
     var o = state.sortie;
-    var grp = (store('sortiesGroup') || GROUP_LINK);
     view(
       '<div class="card"><div class="sec"><span class="num">1</span><b>Date</b></div>' +
       '<div class="field"><input class="input" id="soDate" type="date" value="' + esc(o.date) + '"></div></div>' +
@@ -656,9 +632,7 @@
       '<div class="photos" id="soPhotos"></div></div>' +
       '<div class="card"><div class="sec"><span class="num">3</span><b>Note</b><small>facultatif</small></div>' +
       '<div class="field"><textarea class="input" id="soNote" placeholder="Ex : 3 sacs pour CASA">' + esc(o.note) + '</textarea></div></div>' +
-      '<button class="btn btn-green" id="soSend">' + ic('wa') + 'Envoyer au groupe WhatsApp</button>' +
-      (grp ? '<button class="btn btn-outline" id="soGrp">' + ic('wa') + 'Ouvrir le groupe Retour Sorties</button>'
-           : '<p class="small muted center">Ajoutez le lien du groupe « Retour Sorties » dans Paramètres.</p>') +
+      '<button class="btn btn-green" id="soSend">' + ic('wa') + 'Envoyer sur WhatsApp</button>' +
       '<div id="soNoteOut"></div>' +
       (o.sent ? '<button class="btn btn-ghost" id="soNew">Nouvelle sortie</button>' : '')
     );
@@ -667,7 +641,6 @@
     $('#soNote').oninput = function () { o.note = this.value; };
     $('#soCam').onclick = function () { addSortiePhotos('takePhoto'); };
     $('#soGal').onclick = function () { addSortiePhotos('pickPhotos'); };
-    var gb = $('#soGrp'); if (gb) gb.onclick = function () { openGroup(grp); };
     var nb = $('#soNew'); if (nb) nb.onclick = function () { state.sortie = newSortie(); render(); };
     $('#soSend').onclick = function () {
       if (!o.date) { toast('Choisissez la date', 'err'); return; }
@@ -679,11 +652,11 @@
       setTimeout(function () {
         var r = NATIVE.shareWhatsApp(text, JSON.stringify(o.photos.map(function (p) { return p.id; })),
           'RETOUR SORTIES · ' + fmtDate(o.date), 'SONICOD' + (o.note.trim() ? ' · ' + o.note.trim().slice(0, 40) : ''));
-        b.disabled = false; b.innerHTML = ic('wa') + 'Envoyer au groupe WhatsApp';
+        b.disabled = false; b.innerHTML = ic('wa') + 'Envoyer sur WhatsApp';
         o.sent = true;
         $('#soNoteOut').innerHTML = '<div class="note info" style="margin-top:12px">' + (r === 'error'
           ? 'Impossible d\'ouvrir le partage. Le message a été copié.'
-          : 'WhatsApp est ouvert : choisissez le groupe <b>Retour Sorties</b>, vérifiez puis appuyez sur <b>Envoyer</b>.') + '</div>' +
+          : 'Dans la liste « Envoyer à », choisissez le groupe <b>Ramassage Sonicod</b> puis appuyez sur <b>Envoyer</b> ➤.') + '</div>' +
           '<button class="btn btn-ghost" id="soNew2">Nouvelle sortie</button>';
         $('#soNew2').onclick = function () { state.sortie = newSortie(); render(); };
       }, 50);
@@ -735,8 +708,6 @@
       }).join('') + '</div></div>' +
       '<div class="card">' +
       '<div class="field"><label>Votre prénom <span class="opt">(facultatif – affiché à côté des photos)</span></label><input class="input" id="sName" value="' + esc(inf.name) + '" placeholder="Ex : Soufiane"></div>' +
-      '<div class="field"><label>Lien du groupe WhatsApp « Scanner retours »</label><input class="input" id="sGrp2" value="' + esc((store('scanGroup') || GROUP_LINK)) + '" placeholder="https://chat.whatsapp.com/…" autocapitalize="none" spellcheck="false"></div>' +
-      '<div class="field"><label>Lien du groupe WhatsApp « Retour Sorties »</label><input class="input" id="sGrp" value="' + esc((store('sortiesGroup') || GROUP_LINK)) + '" placeholder="https://chat.whatsapp.com/…" autocapitalize="none" spellcheck="false"></div>' +
       '<div class="field"><label>Adresse du serveur (Apps Script …/exec)</label><input class="input" id="sUrl" value="' + esc(inf.serverUrl) + '" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="none" spellcheck="false"></div>' +
       '<button class="btn btn-primary" id="sSave">Enregistrer</button></div>' +
       (q.length ? '<div class="card"><div class="sec"><b>Opérations en attente</b><small>' + q.length + '</small></div><div class="list">' + q.map(function (o) {
@@ -750,13 +721,7 @@
       b.onclick = function () { store('theme', b.getAttribute('data-t')); applyTheme(); render(); };
     });
     $('#sSave').onclick = function () {
-      var cleanGrp = function (v) { var m = /^\s*https:\/\/chat\.whatsapp\.com\/([A-Za-z0-9]+)/.exec(v || ''); return m ? 'https://chat.whatsapp.com/' + m[1] : String(v || '').trim(); };
-      $('#sGrp').value = cleanGrp($('#sGrp').value); $('#sGrp2').value = cleanGrp($('#sGrp2').value);
-      var url = $('#sUrl').value.trim(), name = $('#sName').value.trim(), grp = $('#sGrp').value.trim();
-      if (grp && !/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]+$/.test(grp)) { toast('Lien du groupe invalide', 'err'); return; }
-      var grp2 = $('#sGrp2').value.trim();
-      if (grp2 && !/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]+$/.test(grp2)) { toast('Lien du groupe « Scanner » invalide', 'err'); return; }
-      store('sortiesGroup', grp); store('scanGroup', grp2);
+      var url = $('#sUrl').value.trim(), name = $('#sName').value.trim();
       if (!/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(url)) { toast('Adresse du serveur invalide', 'err'); return; }
       if (NATIVE) { NATIVE.setServerUrl(url); NATIVE.setName(name); } else { store('serverUrl', url); store('name', name); }
       var b = $('#sSave'); b.disabled = true; b.innerHTML = '<i class="spin"></i> Vérification…';
