@@ -9,7 +9,8 @@
 #snc-panel .h button{background:none;border:0;color:#fff;font-size:18px;cursor:pointer}
 #snc-panel .b{padding:14px 16px}
 #snc-panel label{display:block;font-size:11.5px;font-weight:700;color:#6F6680;text-transform:uppercase;margin:10px 0 4px}
-#snc-panel input,#snc-panel select{width:100%;border:1.5px solid #ECE7F2;border-radius:10px;padding:9px 10px;font:inherit;background:#FAF8FC}
+#snc-panel input,#snc-panel select{width:100%;border:1.5px solid #ECE7F2;border-radius:10px;padding:9px 10px;font:inherit;background:#FAF8FC;color:#1D1428 !important;color-scheme:light}
+#snc-panel option{color:#1D1428;background:#fff}
 #snc-panel .row{display:flex;gap:8px}
 #snc-panel .row > *{flex:1}
 #snc-panel .btn{display:block;width:100%;border:0;border-radius:12px;padding:11px;font:700 14px Segoe UI,Roboto,sans-serif;cursor:pointer;margin-top:10px;color:#fff;background:linear-gradient(135deg,#CF118B,#6E2B92)}

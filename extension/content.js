@@ -20,6 +20,7 @@
   const hash = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h).toString(16); };
 
   let cities = [];
+  let selDay = '';           // jour choisi dans le panneau (gardé quand le panneau se redessine)
   let results = [];          // étiquettes trouvées
   let logLines = [];
   const log = s => { logLines.push(s); const el = $('#snc-log'); if (el) el.textContent = logLines.slice(-12).join('\n'); };
@@ -46,17 +47,54 @@
   }
 
   /** Clé de jour d'un séparateur de date (« AUJOURD'HUI », « HIER », « 23/11/2026 »…). */
-  function dividerDay(text, today, yesterday) {
-    const t = text.trim().toUpperCase();
-    if (/AUJOURD|TODAY|اليوم/.test(t)) return today;
-    if (/^HIER|YESTERDAY|أمس/.test(t)) return yesterday;
-    const m = /(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/.exec(t);
-    if (m) return m[3] + '-' + pad(+m[2]) + '-' + pad(+m[1]);
-    return 'autre:' + t;
+  /** Ordre des dates de ce WhatsApp : 'dm' (23/11/2026) ou 'md' (11/23/2026, WhatsApp en anglais US). Appris sur la page. */
+  function dateOrder() {
+    let dm = 0, md = 0;
+    $$('#main [data-pre-plain-text]').forEach(e => {
+      const m = /(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/.exec(e.getAttribute('data-pre-plain-text') || '');
+      if (!m) return;
+      if (+m[1] > 12) dm++; else if (+m[2] > 12) md++;
+    });
+    if (dm || md) return dm >= md ? 'dm' : 'md';
+    const lang = (document.documentElement.lang || navigator.language || '').toLowerCase();
+    return /^en(-us)?$/.test(lang) ? 'md' : 'dm';
+  }
+  const MONTHS = { jan: 1, janv: 1, january: 1, janvier: 1, feb: 2, fev: 2, 'fév': 2, february: 2, 'février': 2, fevrier: 2, mar: 3, march: 3, mars: 3, apr: 4, avr: 4, april: 4, avril: 4, may: 5, mai: 5,
+    jun: 6, june: 6, juin: 6, jul: 7, july: 7, juil: 7, juillet: 7, aug: 8, august: 8, 'août': 8, aout: 8, sep: 9, sept: 9, september: 9, septembre: 9, oct: 10, october: 10, octobre: 10,
+    nov: 11, november: 11, novembre: 11, dec: 12, 'déc': 12, december: 12, 'décembre': 12, decembre: 12 };
+  const WEEKDAYS = { sunday: 0, dimanche: 0, 'الأحد': 0, monday: 1, lundi: 1, 'الاثنين': 1, 'الإثنين': 1, tuesday: 2, mardi: 2, 'الثلاثاء': 2, wednesday: 3, mercredi: 3, 'الأربعاء': 3,
+    thursday: 4, jeudi: 4, 'الخميس': 4, friday: 5, vendredi: 5, 'الجمعة': 5, saturday: 6, samedi: 6, 'السبت': 6 };
+
+  /** Clé de jour d'un séparateur : « AUJOURD'HUI / TODAY », « HIER / YESTERDAY », « MONDAY / LUNDI », « 23/11/2026 », « 11/23/2026 », « November 23, 2026 »… */
+  function dividerDay(text, today, yesterday, order) {
+    const t = text.trim();
+    const u = t.toUpperCase();
+    if (/AUJOURD|TODAY|اليوم/.test(u)) return today;
+    if (/^HIER|YESTERDAY|أمس/.test(u)) return yesterday;
+    let m = /(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})/.exec(t);
+    if (m) {
+      let d = +m[1], mo = +m[2];
+      if (d > 12) {} else if (mo > 12 || (order || 'dm') === 'md') { const x = d; d = mo; mo = x; }
+      return m[3] + '-' + pad(mo) + '-' + pad(d);
+    }
+    const low = t.toLowerCase().replace(/[.,]/g, ' ');
+    m = /(\d{1,2})\s+([a-zéûôà]+)\s+(\d{4})/.exec(low) || null;          // 23 novembre 2026
+    if (m && MONTHS[m[2]]) return m[3] + '-' + pad(MONTHS[m[2]]) + '-' + pad(+m[1]);
+    m = /([a-zéûôà]+)\s+(\d{1,2})\s+(\d{4})/.exec(low);                   // November 23, 2026
+    if (m && MONTHS[m[1]]) return m[3] + '-' + pad(MONTHS[m[1]]) + '-' + pad(+m[2]);
+    const w = Object.keys(WEEKDAYS).find(k => low.trim() === k || low.trim().startsWith(k + ' '));
+    if (w != null) {                                                       // jour de la semaine = un des 7 derniers jours
+      const now = new Date();
+      for (let back = 2; back <= 7; back++) {
+        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+        if (d.getDay() === WEEKDAYS[w]) return isoOf(d);
+      }
+    }
+    return 'autre:' + u;
   }
 
   /** Date d'un message à partir de data-pre-plain-text « [17:28, 25/11/2026] Nom: ». */
-  function messageDay(el, today) {
+  function messageDay(el, today, order) {
     const pre = el.querySelector('[data-pre-plain-text]');
     if (!pre) return null;
     const m = /(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/.exec(pre.getAttribute('data-pre-plain-text') || '');
@@ -66,7 +104,7 @@
     const md = y + '-' + pad(a) + '-' + pad(b);   // mm/jj/aaaa (anglais)
     if (a > 12) return dm;
     if (b > 12) return md;
-    return dm === today || md !== today ? dm : md;
+    return (order || 'dm') === 'md' ? md : dm;
   }
 
   /** Photos (blob) et documents PDF du chat ouvert, envoyés le jour choisi. */
@@ -74,13 +112,14 @@
     const today = isoOf(new Date());
     const yesterday = isoOf(new Date(Date.now() - 86400000));
     const rows = $$('#main [role="row"]');
+    const order = dateOrder();
     let current = null;
     const imgs = [], docs = [];
     let extra = 0;   // albums : WhatsApp montre 4 photos et « +3 » pour les autres
     rows.forEach(row => {
       const msg = row.querySelector('[data-id]');
-      if (!msg) { const txt = (row.innerText || '').trim(); if (txt && txt.length < 40) current = dividerDay(txt, today, yesterday); return; }
-      const day = messageDay(row, today) || current;
+      if (!msg) { const txt = (row.innerText || '').trim(); if (txt && txt.length < 40) current = dividerDay(txt, today, yesterday, order); return; }
+      const day = messageDay(row, today, order) || current;
       if (day !== dayIso) return;
       const mid = msg.getAttribute('data-id') || '';
       let k = 0;
@@ -134,11 +173,36 @@
   /** Ville / livreur : réglage du groupe, sinon déduit de la zone (« HUB AGADIR » → Agadir). */
   function guessCity(group, zone, groups) {
     if (groups[group]) return groups[group];
-    const z = (zone || '').toUpperCase().replace(/^HUB\s+/, '');
-    const hit = cities.find(c => z && (z.indexOf(c.toUpperCase()) >= 0 || c.toUpperCase().indexOf(z) >= 0));
-    if (hit) return hit;
-    if (/CASABLANCA/.test(z)) return cities.find(c => /^CASA$/i.test(c)) || 'CASA';
-    return '';
+    // la ville écrite dans le nom du groupe (« Retour Sonicod Tanger » → TANGER) ; la zone de l'étiquette (HUB …) n'est PAS fiable
+    const g = ' ' + normName(group).replace(/[^a-z0-9 ]+/g, ' ') + ' ';
+    const hit = cities.find(c => { const n = normName(c); return n.length >= 3 && g.indexOf(' ' + n + ' ') >= 0; });
+    return hit || '';
+  }
+
+  /** Plus ancien jour affiché dans le chat (pour remonter si le jour demandé n'est pas encore chargé). */
+  function oldestShownDay() {
+    const today = isoOf(new Date()), yesterday = isoOf(new Date(Date.now() - 86400000)), order = dateOrder();
+    for (const row of $$('#main [role="row"]')) {
+      const msg = row.querySelector('[data-id]');
+      const d = msg ? messageDay(row, today, order) : ((row.innerText || '').trim().length < 40 ? dividerDay(row.innerText || '', today, yesterday, order) : null);
+      if (d && /^\d{4}-/.test(d)) return d;
+    }
+    return null;
+  }
+  /** Remonte dans le chat (au plus 8 fois) tant que le jour demandé n'est pas affiché. */
+  async function loadDay(dayIso) {
+    for (let i = 0; i < 8; i++) {
+      const o = oldestShownDay();
+      if (o && o < dayIso) return;
+      const first = $('#main [role="row"]');
+      const pane = first && (first.closest('[tabindex="0"]') || first.parentElement);
+      let sc = first; while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 10 && /(auto|scroll)/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
+      if (!sc || sc === document.body) return;
+      const before = $$('#main [role="row"]').length;
+      sc.scrollTop = 0;
+      await wait(1200);
+      if ($$('#main [role="row"]').length === before && sc.scrollTop === 0 && i > 1) return;
+    }
   }
 
   /** Étape 1 (rapide, chat ouvert) : photos du jour + bon PDF. La lecture des étiquettes se fait après. */
@@ -146,6 +210,7 @@
     const group = chatName();
     if (!group) { log('Ouvrez d\'abord un groupe dans WhatsApp.'); return null; }
     const groups = (await store.get('groups')) || {};
+    if (dayIso < isoOf(new Date())) await loadDay(dayIso);
     const { imgs, docs, extra } = collectDay(dayIso);
     if (!imgs.length && !docs.length) { log(group + ' : rien pour ' + fmt(dayIso) + '.'); return null; }
     const rec = { key: group + '|' + dayIso, group, day: dayIso, colis: null, brvs: {}, zone: '', photos: [], labels: [], docs: [], raw: [], livreur: groups[group] || '', checked: true, status: '', photoHashes: [], photoIds: [], nPhotos: imgs.length + (extra || 0), labelUnread: 0, source: '' };
@@ -301,7 +366,7 @@
     const cityOpts = sel => '<option value="">— Ville / Livreur —</option>' + cities.map(c => '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
     panel.innerHTML =
       '<div class="h"><b>⚡ SONICOD · Retours du jour</b><button id="snc-x">✕</button></div><div class="b">' +
-      '<label>Jour</label><input type="date" id="snc-day" value="' + today + '">' +
+      '<label>Jour</label><input type="date" id="snc-day" value="' + (selDay || today) + '">' +
       '<label>Groupe ouvert</label><div class="grp">' + (group ? esc(group) : 'Aucun – ouvrez un groupe retour') + '</div>' +
       (group ? '<label>Ce groupe correspond à</label><select id="snc-city">' + cityOpts(groups[group] || '') + '</select>' : '') +
       '<div class="row"><button class="btn" id="snc-one"' + (group ? '' : ' disabled') + '>Lire ce groupe</button>' +
@@ -323,6 +388,7 @@
       '<label>Adresse du script (…/exec)</label><input id="snc-url" placeholder="(par défaut)" value="' + esc(url) + '">' +
       '</details></div>';
     $('#snc-x').onclick = () => { panel.style.display = 'none'; };
+    $('#snc-day').onchange = () => { selDay = $('#snc-day').value || ''; };
     const citySel = $('#snc-city');
     if (citySel) citySel.onchange = async () => {
       const g = (await store.get('groups')) || {};
@@ -342,6 +408,7 @@
     $('#snc-one').onclick = async () => {
       const day = $('#snc-day').value || today;
       if (citySel && citySel.value) { const g = (await store.get('groups')) || {}; g[group] = citySel.value; await store.set('groups', g); }
+      if (citySel && !citySel.value && !guessCity(group, '', groups)) { log('⚠ Choisissez d\'abord la ville dans « Ce groupe correspond à ».'); citySel.focus(); return; }
       busy(true); await analyseOpenChat(day); busy(false);
     };
     $('#snc-all').onclick = async () => {
