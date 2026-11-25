@@ -28,7 +28,7 @@ const val WHATSAPP_GROUP_LINK = "https://chat.whatsapp.com/LP2gQjIm7R95AYBLIj27A
  * Adresse du script Google (…/exec). Collez-la ici avant de construire l'APK
  * pour que les téléphones n'aient rien à configurer. Sinon : Paramètres dans l'app.
  */
-const val DEFAULT_SERVER_URL = ""
+const val DEFAULT_SERVER_URL = "https://script.google.com/macros/s/AKfycbwJ1PN16V9WjRuOVN9cky7pKRTyufnSGlPCpw-gi4BKfGoXOQS1kn8pbcrrhPimt4sx/exec"
 
 /** Clé partagée avec le script Google (même valeur que APP_KEY dans Code.gs). */
 const val APP_KEY = "SNC-1b7ae4568269c1f64afde3ce18d9639c"
