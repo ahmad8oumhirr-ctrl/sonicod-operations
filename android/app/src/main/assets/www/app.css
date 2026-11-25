@@ -185,3 +185,6 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:38px;backgrou
 .steps i{flex:1;height:2px;background:var(--line);margin:0 4px}
 .btn-finish{background:var(--yellow);color:#2A1A00;font-size:17px;padding:18px;margin-top:4px;box-shadow:0 8px 20px rgba(245,184,0,.3)}
 .btn-finish:disabled{opacity:.45;box-shadow:none}
+.success-ic.run{background:var(--violet)}
+.success-ic.run .spin{width:30px;height:30px;border-width:4px}
+.success-ic.err{background:var(--red);font-size:34px;font-weight:900}

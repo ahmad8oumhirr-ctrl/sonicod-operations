@@ -317,16 +317,41 @@
     var b = $('#send');
     b.disabled = true;
     b.innerHTML = '<i class="spin"></i> ' + (ids.length ? 'Enregistrement et envoi des photos…' : 'Enregistrement…');
+    // On passe tout de suite à l'écran WhatsApp ; l'enregistrement continue en arrière-plan.
+    var L = { op: op, photoIds: ids, pending: true, queued: false, data: null, draft: d };
+    state.last = L;
+    state.draft = null;
+    go('success', {}, { replace: true });
     nat('submit', JSON.stringify(op), JSON.stringify(ids)).then(function (res) {
-      if (!res.ok) {
-        b.disabled = false; b.innerHTML = ic('send') + 'ENVOYER';
-        toast(res.error || 'Erreur', 'err');
-        return;
-      }
-      state.last = { op: op, photoIds: ids, queued: !!res.queued, data: res.data || null };
-      state.draft = null;
-      go('success', {}, { replace: true });
+      L.pending = false;
+      if (!res.ok) { L.error = res.error || 'Erreur'; }
+      else { L.queued = !!res.queued; L.data = res.data || null; }
+      if (state.route === 'success' && state.last === L) updateSaveStatus();
+      else if (L.error) toast('Opération NON enregistrée : ' + L.error, 'err');
     });
+  }
+
+  /** Carte d'état de l'enregistrement (en cours / enregistrée / hors ligne / erreur). */
+  function updateSaveStatus() {
+    var L = state.last, el = $('#saveStatus');
+    if (!L || !el) return;
+    if (L.pending) {
+      el.innerHTML = '<div class="success-ic run"><i class="spin"></i></div><b>Enregistrement dans Google Sheets…</b>' +
+        '<p class="muted small">Vous pouvez déjà envoyer sur WhatsApp.' + (L.photoIds.length ? ' Les photos sont envoyées en arrière-plan.' : '') + '</p>';
+      setHeader('Enregistrement…', L.op.livreur + ' · ' + L.op.colis + ' colis');
+    } else if (L.error) {
+      el.innerHTML = '<div class="success-ic err">!</div><b>Pas enregistrée</b><p class="small" style="color:var(--red)">' + esc(L.error) + '</p>' +
+        '<button class="btn btn-primary" id="fixOp">Corriger l\'opération</button>';
+      setHeader('Erreur', L.op.livreur);
+      $('#fixOp').onclick = function () { state.draft = L.draft; state.draft.opId = uuid(); go('op', {}, { replace: true }); };
+    } else if (L.queued) {
+      el.innerHTML = '<div class="success-ic wait">' + ic('sync') + '</div><b>Pas de connexion internet</b><p class="muted small">Gardée sur le téléphone, envoi automatique dès le retour d\'internet.</p>';
+      setHeader('Enregistrée hors ligne', L.op.livreur + ' · ' + L.op.colis + ' colis');
+    } else {
+      el.innerHTML = '<div class="success-ic">' + ic('check') + '</div><b>Enregistrée dans Google Sheets</b><p class="muted small">Ligne ' + esc(L.data && L.data.row) +
+        (L.data && L.data.photoLinks && L.data.photoLinks.length ? ' · ' + L.data.photoLinks.length + ' photo(s) sauvegardée(s)' : '') + '</p>';
+      setHeader('Opération enregistrée', L.op.livreur + ' · ' + L.op.colis + ' colis');
+    }
   }
 
   function whatsappText(op) {
@@ -344,15 +369,9 @@
     var L = state.last;
     if (!L) { go('op', {}, { replace: true }); return; }
     var text = whatsappText(L.op);
-    setHeader(L.queued ? 'Enregistrée hors ligne' : 'Opération enregistrée', L.op.livreur + ' · ' + L.op.colis + ' colis');
+    setHeader('Opération', L.op.livreur + ' · ' + L.op.colis + ' colis');
     view(
-      '<div class="card center">' +
-      (L.queued
-        ? '<div class="success-ic wait">' + ic('sync') + '</div><b>Pas de connexion internet</b><p class="muted small">L\'opération est gardée sur le téléphone et sera envoyée automatiquement dans Google Sheets dès le retour d\'internet.</p>'
-        : '<div class="success-ic">' + ic('check') + '</div><b>Enregistrée dans Google Sheets</b><p class="muted small">Ligne ' + esc(L.data && L.data.row) +
-          (L.data && L.data.photoLinks && L.data.photoLinks.length ? ' · ' + L.data.photoLinks.length + ' photo(s) sauvegardée(s)' : '') +
-          (L.data && L.data.duplicate ? ' · déjà enregistrée (pas de doublon)' : '') + '</p>') +
-      '</div>' +
+      '<div class="card center" id="saveStatus"></div>' +
       '<div class="card"><div class="sec"><b>Message WhatsApp</b></div><div class="msgbox">' + esc(text) + '</div>' +
       (L.photoIds.length ? '<p class="small muted">+ ' + L.photoIds.length + ' photo(s) jointe(s)</p>' : '') + '</div>' +
       '<button class="btn btn-green" id="share">' + ic('wa') + 'Envoyer sur WhatsApp (photos + message)</button>' +
@@ -360,6 +379,7 @@
       '<div style="height:12px"></div>' +
       '<button class="btn btn-primary" id="again">' + ic('box') + ' Nouvelle opération</button>'
     );
+    updateSaveStatus();
     $('#share').onclick = function () {
       if (!NATIVE) { toast('Disponible dans l\'application Android', 'err'); return; }
       var st = /^valid/i.test(L.op.statut) ? 'Retour validé' : (/reclam/i.test(L.op.statut) ? 'Attente réclamation' : L.op.statut);
@@ -451,7 +471,7 @@
       var badge, line;
       if (s.status === 'ok') { badge = '<span class="badge b-ok">✓ ' + esc(s.cell) + '</span>'; line = 'Ajouté dans Gestion Roteur'; }
       else if (s.status === 'dup') { badge = '<span class="badge b-err">Doublon</span>'; line = 'Déjà dans la feuille : ' + esc(s.where); }
-      else if (s.status === 'wait') { badge = '<span class="badge b-wait">⟳ En attente</span>'; line = 'Envoi dès le retour d\'internet'; }
+      else if (s.status === 'wait') { badge = '<span class="badge b-wait">⟳ ' + (s.offline ? 'Hors ligne' : 'Envoi…') + '</span>'; line = s.offline ? 'Envoi dès le retour d\'internet' : 'Envoi vers Gestion Roteur'; }
       else { badge = '<span class="badge b-err">Erreur</span>'; line = esc(s.msg || ''); }
       return '<div class="item"><div class="main"><div class="t1 mono">' + esc(s.tracking) + ' ' + badge + '</div>' +
         '<div class="t2">' + hhmm(s.at) + ' · ' + line + '</div></div>' +
@@ -478,8 +498,8 @@
         var force = s.status === 'dup';
         var run = function () {
           s.id = uuid();
-          s.status = 'wait'; s.force = force; saveScans(); refreshScanList();
-          sendScan(s);
+          s.status = 'wait'; s.force = force; addToSession(s); saveScans(); refreshScanList();
+          pumpScans();
         };
         if (force) confirmBox('Ajouter quand même ?', s.tracking + ' existe déjà (' + s.where + '). Il sera ajouté une 2e fois.', 'Ajouter').then(function (ok) { if (ok) run(); });
         else run();
@@ -507,8 +527,33 @@
       toast('⚠ Doublon : ' + tracking, 'err');
       return Promise.resolve(s);
     }
-    state.scans.unshift(s); saveScans(); refreshScanList();
-    return sendScan(s);
+    state.scans.unshift(s); addToSession(s); saveScans(); refreshScanList();
+    feedback(true); flash(s);
+    pumpScans();                       // envoi au Sheet en arrière-plan (le scanner n'attend pas)
+    return Promise.resolve(s);
+  }
+
+  /** File d'envoi : un scan après l'autre, sans bloquer l'écran. */
+  function pumpScans() {
+    if (state.sending) { state.again = true; return; }
+    var s = state.scans.slice().reverse().filter(function (x) { return x.status === 'wait' && !x.offline; })[0];
+    if (!s) { state.offlineMode = false; return; }
+    state.sending = true;
+    api('scan', { tracking: s.tracking, scanId: s.id, at: s.at, force: !!s.force }).then(function (r) {
+      state.sending = false;
+      applyScanResult(s, r);
+      if (s.status === 'dup') { feedback(false); toast('⚠ Doublon : ' + s.tracking + ' (' + s.where + ')', 'err'); }
+      else if (s.status === 'err') { feedback(false); toast(s.msg || 'Erreur', 'err'); }
+      else if (r.network) {
+        // pas d'internet : on garde tout, nouvel essai plus tard
+        state.scans.forEach(function (x) { if (x.status === 'wait') x.offline = true; });
+        saveScans(); refreshScanList();
+        setTimeout(function () { state.scans.forEach(function (x) { delete x.offline; }); pumpScans(); }, 20000);
+        return;
+      }
+      saveScans(); refreshScanList();
+      pumpScans();
+    });
   }
 
   function sessionItems() {
@@ -541,24 +586,11 @@
     });
   }
 
-  /** Renvoie les scans en attente (un par un, du plus ancien au plus récent). */
+  /** Relance l'envoi des scans en attente. */
   function retryScans(manual) {
-    if (state.sending) return;
-    var list = pendingScans().slice().reverse();
-    if (!list.length) { if (manual) toast('Rien en attente ✓', 'ok'); return; }
-    state.sending = true;
-    var i = 0;
-    var next = function () {
-      if (i >= list.length) { state.sending = false; if (manual) toast('Scans envoyés ✓', 'ok'); return; }
-      var s = list[i++];
-      api('scan', { tracking: s.tracking, scanId: s.id, at: s.at }).then(function (r) {
-        if (r.network) { state.sending = false; if (manual) toast('Toujours pas de connexion', 'err'); return; }
-        applyScanResult(s, r);
-        saveScans(); refreshScanList();
-        next();
-      });
-    };
-    next();
+    state.scans.forEach(function (x) { delete x.offline; });
+    if (manual && !pendingScans().length) toast('Rien en attente ✓', 'ok');
+    pumpScans();
   }
 
   function scanLoop() {
@@ -573,7 +605,7 @@
       addTracking(r.value).then(function (s) {
         if (!s) return;
         // En continu : le scanner se rouvre, sauf doublon / erreur (l'agent doit voir l'alerte)
-        if (state.rafale && state.route === 'scan' && (s.status === 'ok' || s.status === 'wait')) setTimeout(scanLoop, 700);
+        if (state.rafale && state.route === 'scan' && (s.status === 'ok' || s.status === 'wait')) setTimeout(scanLoop, 400);
       });
     });
   }

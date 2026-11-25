@@ -101,7 +101,7 @@ object Api {
 
 /** Photos compressées et stockées dans l'application (files/photos). */
 object PhotoStore {
-    private const val MAX_SIDE = 1600
+    private const val MAX_SIDE = 1280
     private val ID_RE = Regex("^[a-f0-9-]{36}$")
 
     fun dir(ctx: Context): File = File(ctx.filesDir, "photos").apply { mkdirs() }
@@ -152,7 +152,7 @@ object PhotoStore {
             bmp = out
         }
         val id = UUID.randomUUID().toString()
-        File(dir(ctx), "$id.jpg").outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 82, it) }
+        File(dir(ctx), "$id.jpg").outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 75, it) }
         bmp.recycle()
         return id
     }
