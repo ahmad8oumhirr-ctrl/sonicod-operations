@@ -108,37 +108,100 @@
   }
 
   /** Photos (blob) et documents PDF du chat ouvert, envoyés le jour choisi. */
-  function collectDay(dayIso) {
-    const today = isoOf(new Date());
-    const yesterday = isoOf(new Date(Date.now() - 86400000));
-    const rows = $$('#main [role="row"]');
-    const order = dateOrder();
+  /**
+   * Messages et séparateurs de jour du chat ouvert, DANS L'ORDRE de la page.
+   * Le nouveau WhatsApp Web ne met pas toujours les séparateurs (« TODAY », « MONDAY », « 23/11/2026 »)
+   * dans des lignes role="row" : on les cherche partout dans le chat.
+   */
+  function chatTimeline() {
+    const main = $('#main');
+    if (!main) return [];
+    const today = isoOf(new Date()), yesterday = isoOf(new Date(Date.now() - 86400000)), order = dateOrder();
+    const items = [];
+    // messages : éléments data-id les plus extérieurs
+    main.querySelectorAll('[data-id]').forEach(el => {
+      if (el.parentElement && el.parentElement.closest('[data-id]')) return;
+      if (el.closest('header, footer')) return;
+      items.push({ type: 'msg', el });
+    });
+    // séparateurs : petits textes « jour » hors des messages
+    main.querySelectorAll('span, div').forEach(el => {
+      if (el.children.length > 1) return;
+      const t = (el.textContent || '').trim();
+      if (!t || t.length > 30) return;
+      if (el.closest('[data-id], header, footer, #snc-panel')) return;
+      if (el.children.length === 1 && (el.children[0].textContent || '').trim() === t) return;   // garder l'élément le plus profond
+      const d = dividerDay(t, today, yesterday, order);
+      if (!/^autre:/.test(d)) items.push({ type: 'day', el, day: d, text: t });
+    });
+    items.sort((x, y) => (x.el === y.el ? 0 : (x.el.compareDocumentPosition(y.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
     let current = null;
+    items.forEach(it => {
+      if (it.type === 'day') { current = it.day; return; }
+      const row = it.el.closest('[role="row"]') || it.el;
+      it.row = row;
+      it.day = messageDay(row, today, order) || messageDay(it.el, today, order) || current;
+    });
+    return items;
+  }
+
+  /** Photos (blob) et documents PDF du chat ouvert, envoyés le jour choisi. */
+  function collectDay(dayIso) {
+    const items = chatTimeline();
     const imgs = [], docs = [];
     let extra = 0;   // albums : WhatsApp montre 4 photos et « +3 » pour les autres
-    rows.forEach(row => {
-      const msg = row.querySelector('[data-id]');
-      if (!msg) { const txt = (row.innerText || '').trim(); if (txt && txt.length < 40) current = dividerDay(txt, today, yesterday, order); return; }
-      const day = messageDay(row, today, order) || current;
-      if (day !== dayIso) return;
-      const mid = msg.getAttribute('data-id') || '';
+    const seenImg = new Set();
+    let nMsg = 0;
+    items.forEach(it => {
+      if (it.type !== 'msg') return;
+      nMsg++;
+      if (it.day !== dayIso) return;
+      const box = it.row;
+      const mid = it.el.getAttribute('data-id') || '';
       let k = 0;
-      row.querySelectorAll('img').forEach(img => {
+      box.querySelectorAll('img').forEach(img => {
+        if (seenImg.has(img)) return;
         const src = img.getAttribute('src') || '';
         if (!src.startsWith('blob:')) return;
         if ((img.naturalWidth || 0) < 120 || (img.naturalHeight || 0) < 120) return;
         if (img.closest('header')) return;
+        seenImg.add(img);
         img.__sncId = mid ? 'wa:' + mid + '#' + (k++) : '';   // identifiant WhatsApp du message : le même à chaque lecture
         imgs.push(img);
       });
-      const plus = Array.from(row.querySelectorAll('span, div')).find(e => e.children.length === 0 && /^\+\d{1,3}$/.test((e.textContent || '').trim()));
+      const plus = Array.from(box.querySelectorAll('span, div')).find(e => e.children.length === 0 && /^\+\d{1,3}$/.test((e.textContent || '').trim()));
       if (plus && k) extra += +plus.textContent.trim().slice(1);
       // document PDF : un élément dont le texte se termine par .pdf
-      const nameEl = Array.from(row.querySelectorAll('span, div')).find(e => e.children.length === 0 && /\.pdf\s*$/i.test(e.textContent || ''));
-      if (nameEl) docs.push({ name: nameEl.textContent.trim(), el: nameEl });
+      const nameEl = Array.from(box.querySelectorAll('span, div')).find(e => e.children.length === 0 && /\.pdf\s*$/i.test(e.textContent || ''));
+      if (nameEl && !docs.some(d => d.name === nameEl.textContent.trim())) docs.push({ name: nameEl.textContent.trim(), el: nameEl });
     });
-    log('Lignes lues : ' + rows.length + ' · ' + fmt(dayIso) + ' : ' + imgs.length + ' photo(s), ' + docs.length + ' PDF');
+    log('Messages lus : ' + nMsg + ' · ' + fmt(dayIso) + ' : ' + imgs.length + ' photo(s), ' + docs.length + ' PDF');
     return { imgs, docs, extra };
+  }
+
+  /** Diagnostic : ce que le bot voit dans le chat ouvert (sans le texte des messages). */
+  function diagnostic() {
+    const main = $('#main');
+    const L = [];
+    L.push('SONICOD bot v' + (chrome.runtime.getManifest ? chrome.runtime.getManifest().version : '?') + ' · ' + new Date().toLocaleString('fr-FR'));
+    L.push('Groupe : ' + (chatName() || '(aucun)') + ' · langue page : ' + (document.documentElement.lang || '?') + ' · ordre dates : ' + dateOrder());
+    if (!main) { L.push('#main introuvable (aucun chat ouvert ?)'); return L.join('\n'); }
+    const items = chatTimeline();
+    const msgs = items.filter(i => i.type === 'msg'), days = items.filter(i => i.type === 'day');
+    L.push('lignes role=row : ' + main.querySelectorAll('[role="row"]').length + ' · éléments data-id : ' + main.querySelectorAll('[data-id]').length + ' · messages : ' + msgs.length);
+    const imgsAll = Array.from(main.querySelectorAll('img'));
+    const blob = imgsAll.filter(i => (i.getAttribute('src') || '').startsWith('blob:'));
+    L.push('images : ' + imgsAll.length + ' · blob : ' + blob.length + ' · blob ≥120px : ' + blob.filter(i => i.naturalWidth >= 120 && i.naturalHeight >= 120).length +
+      ' · data: ' + imgsAll.filter(i => (i.getAttribute('src') || '').startsWith('data:')).length + ' · tailles blob : ' + blob.slice(0, 6).map(i => i.naturalWidth + 'x' + i.naturalHeight).join(' '));
+    L.push('pre-plain-text : ' + main.querySelectorAll('[data-pre-plain-text]').length + ' · ex : ' + Array.from(main.querySelectorAll('[data-pre-plain-text]')).slice(-2).map(e => ((e.getAttribute('data-pre-plain-text') || '').match(/^\[[^\]]*\]/) || [''])[0]).join(' '));
+    L.push('séparateurs de jour : ' + (days.map(d => '« ' + d.text + ' »→' + d.day).join(', ') || 'AUCUN'));
+    const byDay = {};
+    msgs.forEach(m => { const k = m.day || '?'; byDay[k] = byDay[k] || { m: 0, img: 0 }; byDay[k].m++; byDay[k].img += Array.from((m.row || m.el).querySelectorAll('img')).filter(i => (i.getAttribute('src') || '').startsWith('blob:')).length; });
+    L.push('par jour : ' + Object.keys(byDay).map(k => k + ' = ' + byDay[k].m + ' msg / ' + byDay[k].img + ' photo(s)').join(' · '));
+    L.push('PDF visibles : ' + Array.from(main.querySelectorAll('span, div')).filter(e => e.children.length === 0 && /\.pdf\s*$/i.test(e.textContent || '')).length);
+    const r0 = msgs.length ? msgs[msgs.length - 1] : null;
+    if (r0) L.push('dernier message : balise ' + r0.el.tagName + ' role=' + (r0.el.getAttribute('role') || '-') + ' · dans role=row : ' + !!r0.el.closest('[role="row"]'));
+    return L.join('\n');
   }
 
   /** Récupère le contenu d'un PDF en cliquant dessus (capturé par hook.js, sans téléchargement). */
@@ -181,13 +244,8 @@
 
   /** Plus ancien jour affiché dans le chat (pour remonter si le jour demandé n'est pas encore chargé). */
   function oldestShownDay() {
-    const today = isoOf(new Date()), yesterday = isoOf(new Date(Date.now() - 86400000)), order = dateOrder();
-    for (const row of $$('#main [role="row"]')) {
-      const msg = row.querySelector('[data-id]');
-      const d = msg ? messageDay(row, today, order) : ((row.innerText || '').trim().length < 40 ? dividerDay(row.innerText || '', today, yesterday, order) : null);
-      if (d && /^\d{4}-/.test(d)) return d;
-    }
-    return null;
+    const it = chatTimeline().find(i => i.day && /^\d{4}-/.test(i.day));
+    return it ? it.day : null;
   }
   /** Remonte dans le chat (au plus 8 fois) tant que le jour demandé n'est pas affiché. */
   async function loadDay(dayIso) {
@@ -376,6 +434,7 @@
       '<div class="row" style="align-items:center;margin-top:6px"><input type="time" id="snc-time" value="00:00" style="max-width:120px"><button class="btn o" id="snc-tadd" style="margin:0;padding:8px">＋ Ajouter l\'heure</button></div>' +
       '<div class="s" style="font-size:12px;color:#6F6680;margin-top:6px">Lit tous mes groupes (hier + aujourd\'hui). Dernière lecture : ' + esc(lastRun) + '</div>' +
       '<button class="btn o" id="snc-now" style="margin-top:8px">Tester maintenant</button></div>' +
+      '<button class="btn o" id="snc-diag" style="margin-top:8px">🔍 Diagnostic (ce que le bot voit)</button><pre id="snc-diagout" style="display:none;white-space:pre-wrap;font-size:11.5px;background:#F4F0F8;color:#1D1428;border-radius:8px;padding:8px;margin-top:6px;max-height:240px;overflow:auto"></pre>' +
       '<div id="snc-res"></div>' +
       '<button class="btn g" id="snc-save" style="display:none">Renvoyer au Sheet</button>' +
       '<div class="log" id="snc-log">' + esc(logLines.slice(-12).join('\n')) + '</div>' +
@@ -420,6 +479,11 @@
     $$('[data-tdel]').forEach(a => a.onclick = async e => { e.preventDefault(); sched.times.splice(+a.dataset.tdel, 1); await saveSched(sched); renderPanel(); });
     $('#snc-now').onclick = async () => { busy(true); await scheduledRun(true); busy(false); renderPanel(); };
     $('#snc-save').onclick = saveAll;
+    $('#snc-diag').onclick = () => {
+      const o = $('#snc-diagout'); const txt = diagnostic();
+      o.style.display = 'block'; o.textContent = txt;
+      try { navigator.clipboard.writeText(txt); log('Diagnostic copié : collez-le à Claude.'); } catch (e) {}
+    };
     renderResults();
   }
 
