@@ -144,7 +144,17 @@
     else { if (!state.draft) state.draft = newDraft(); state.draft.photos = state.draft.photos.concat(arr).slice(0, 10); saveDraft(); }
     render(); toast('Photo récupérée ✓', 'ok');
   };
-  window.sonicodResume = function () { applyTheme(); refreshSyncPill(); retryScans(); };
+  window.sonicodResume = function () { applyTheme(); refreshSyncPill(); retryScans(); if (state.route === 'bot') render(); };
+  window.sonicodBotRefresh = function () { if (state.route === 'bot') render(); };
+  /** Photos / bon PDF partagés depuis WhatsApp → écran « Partager ». */
+  window.sonicodShareReady = function () {
+    if (!NATIVE || !NATIVE.takeShared) return;
+    var s = NATIVE.takeShared(); if (!s) return;
+    try { state.share = JSON.parse(s); } catch (e) { return; }
+    if (!(state.share.photos || []).length && !(state.share.files || []).length) { toast('Rien à importer', 'err'); return; }
+    state.share.pid = ''; state.share.group = ''; state.share.livreur = ''; state.share.date = todayIso(); state.share.colis = ''; state.share.ocr = 'wait';
+    go('partage');
+  };
 
   function setHeader(title, sub) {
     $('#topTitle').textContent = title || '';
@@ -688,11 +698,16 @@
     if (!state.pendList) state.pendList = store('pendList') || [];
     var w = state.pendList.filter(function (p) { return p.statut !== 'VALIDER'; }).length;
     setHeader('Retours des groupes', w ? w + ' en attente · ajoutés par le bot WhatsApp' : 'Ajoutés automatiquement par le bot WhatsApp');
+    var bs = botStatus();
+    var botOn = bs && bs.enabled && bs.notif && bs.files;
     view(
+      (NATIVE && NATIVE.botStatus ? '<button class="botbar ' + (botOn ? 'on' : 'off') + '" id="goBot"><span class="dot"></span><span class="bt"><b>Bot WhatsApp du téléphone</b><br><small>' +
+        (botOn ? 'Actif · ' + Object.keys(bs.groups || {}).length + ' groupe(s) suivis' : 'Inactif – appuyez pour l\'activer') + '</small></span>' + ic('gear') + '</button>' : '') +
       '<div class="sec" style="margin:0 2px 10px"><b>Par groupe et par jour</b><small><button class="btn btn-ghost btn-sm" id="pReload">' + ic('sync') + 'Actualiser</button></small></div>' +
       '<div id="pList">' + pendListHtml() + '</div>'
     );
     $('#pReload').onclick = function () { loadPending(true); };
+    var gb = $('#goBot'); if (gb) gb.onclick = function () { go('bot'); };
     bindPendList();
     loadPending(false);
   };
@@ -869,6 +884,150 @@
     });
   }
 
+  /* ================= BOT WHATSAPP DU TÉLÉPHONE ================= */
+  function botStatus() {
+    if (!NATIVE || !NATIVE.botStatus) return null;
+    try { return JSON.parse(NATIVE.botStatus()); } catch (e) { return null; }
+  }
+  /** Même calcul que le bot Chrome : une seule ligne par groupe et par jour. */
+  function jhash(str) { var h = 0; for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return Math.abs(h).toString(16); }
+  function cityOptions(sel) {
+    return '<option value="">Ville…</option>' + (state.config.cities || []).map(function (c) {
+      return '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>';
+    }).join('');
+  }
+  function pickCity(title) {
+    return new Promise(function (resolve) {
+      var s = openSheet('<h2>' + esc(title) + '</h2><p class="muted">Ce groupe correspond à quelle ville ?</p><div class="chips cities">' +
+        (state.config.cities || []).map(function (c) { return '<button class="chip" data-c="' + esc(c) + '">' + esc(c) + '</button>'; }).join('') +
+        '</div><button class="btn btn-outline" id="pcNo">Annuler</button>');
+      $$('[data-c]', s).forEach(function (b) { b.onclick = function () { closeSheet(); resolve(b.getAttribute('data-c')); }; });
+      $('#pcNo', s).onclick = function () { closeSheet(); resolve(null); };
+    });
+  }
+
+  ROUTES.bot = function () {
+    var st = botStatus();
+    setHeader('Bot WhatsApp', 'Photos + bon PDF + colis → Retours en attente');
+    if (!st) { view('<div class="empty">Disponible dans l\'application Android.</div>'); return; }
+    var groups = st.groups || {};
+    var names = Object.keys(groups);
+    var step = function (ok, n, title, sub, btn, id) {
+      return '<div class="bstep ' + (ok ? 'ok' : '') + '"><span class="num">' + (ok ? '✓' : n) + '</span><div class="main"><b>' + title + '</b><br><span class="small muted">' + sub + '</span></div>' +
+        (ok ? '' : '<button class="btn btn-primary btn-sm" id="' + id + '">' + btn + '</button>') + '</div>';
+    };
+    var last = st.lastRun ? new Date(st.lastRun) : null;
+    view(
+      '<div class="card"><div class="sec"><b>1 · Autorisations</b></div>' +
+      step(st.notif, 1, 'Lire les notifications WhatsApp', 'Pour savoir quel groupe envoie une photo ou un PDF.', 'Activer', 'bNotif') +
+      (!st.notif && st.sdk >= 33 ? '<div class="note info small">Si Android dit « Paramètre restreint » : <a href="#" id="bInfo">Infos de l\'appli</a> → ⋮ en haut → <b>Autoriser les paramètres restreints</b>, puis réessayez.</div>' : '') +
+      step(st.files, 2, 'Lire le dossier WhatsApp', 'Pour récupérer les photos et le bon PDF reçus.', 'Autoriser', 'bFiles') +
+      (st.files && !st.whatsappFolder ? '<div class="note err small">Dossier WhatsApp Business introuvable sur ce téléphone.</div>' : '') +
+      '<div class="note info small">Dans WhatsApp Business : <b>Paramètres → Stockage et données → Téléchargement auto</b> : cochez <b>Photos</b> et <b>Documents</b>. Ne mettez pas les groupes retour en silencieux.</div>' +
+      '</div>' +
+      '<div class="card"><label class="kv"><span><b>2 · Bot activé</b><br><span class="small muted">Envoi automatique quelques minutes après chaque photo</span></span>' +
+      '<span class="switch"><input type="checkbox" id="bOn"' + (st.enabled ? ' checked' : '') + '><span></span></span></label></div>' +
+      '<div class="card"><div class="sec"><b>3 · Mes groupes retour</b><small>' + names.length + '</small></div>' +
+      (names.length ? '<div class="list">' + names.map(function (g, i) {
+        return '<div class="item"><div class="av">' + esc(initials(groups[g])) + '</div><div class="main"><div class="t1">' + esc(g) + '</div>' +
+          '<select class="input input-sm" data-gv="' + i + '">' + cityOptions(groups[g]) + '</select></div>' +
+          '<button class="btn btn-danger btn-sm" data-gd="' + i + '">✕</button></div>';
+      }).join('') + '</div>' : '<p class="muted small">Aucun groupe. Ajoutez-les ci-dessous.</p>') +
+      (st.seen && st.seen.length ? '<div class="sec" style="margin-top:12px"><b>Groupes vus récemment</b><small>appuyez pour ajouter</small></div><div class="chips">' +
+        st.seen.map(function (x, i) { return '<button class="chip" data-gs="' + i + '">＋ ' + esc(x.name) + '</button>'; }).join('') + '</div>'
+        : '<p class="muted small" style="margin-top:8px">Les groupes qui vous envoient des messages apparaîtront ici.</p>') +
+      '<button class="btn btn-ghost" id="bAdd">＋ Ajouter un groupe par son nom</button></div>' +
+      '<button class="btn btn-primary" id="bRun">' + ic('sync') + 'Lire maintenant</button>' +
+      '<div class="card"><div class="sec"><b>Journal</b><small>' + (last ? 'dernier passage ' + pad(last.getHours()) + ':' + pad(last.getMinutes()) : '') +
+      (st.waiting ? ' · ' + st.waiting + ' fichier(s) en attente de téléchargement' : '') + '</small></div>' +
+      '<pre class="blog">' + esc((st.log || []).slice(-15).reverse().join('\n') || '—') + '</pre></div>'
+    );
+    var saveGroups = function () { NATIVE.botSetGroups(JSON.stringify(groups)); render(); };
+    var addGroup = function (name) {
+      if (!name) return;
+      pickCity(name).then(function (c) { if (!c) return; groups[name] = c; saveGroups(); toast('Groupe ajouté ✓', 'ok'); });
+    };
+    var n1 = $('#bNotif'); if (n1) n1.onclick = function () { NATIVE.botOpenNotif(); };
+    var n2 = $('#bFiles'); if (n2) n2.onclick = function () { NATIVE.botOpenFiles(); };
+    var n3 = $('#bInfo'); if (n3) n3.onclick = function (e) { e.preventDefault(); NATIVE.botOpenAppInfo(); };
+    $('#bOn').onchange = function () {
+      if (this.checked && !names.length) { this.checked = false; toast('Ajoutez d\'abord un groupe retour', 'err'); return; }
+      NATIVE.botSetEnabled(this.checked); toast(this.checked ? 'Bot activé ✓' : 'Bot arrêté', this.checked ? 'ok' : ''); render();
+    };
+    $$('[data-gv]').forEach(function (sel) { sel.onchange = function () { var g = names[+sel.getAttribute('data-gv')]; if (sel.value) { groups[g] = sel.value; saveGroups(); } }; });
+    $$('[data-gd]').forEach(function (b) {
+      b.onclick = function () { var g = names[+b.getAttribute('data-gd')]; confirmBox('Retirer ce groupe ?', g, 'Retirer').then(function (ok) { if (ok) { delete groups[g]; saveGroups(); } }); };
+    });
+    $$('[data-gs]').forEach(function (b) { b.onclick = function () { addGroup(st.seen[+b.getAttribute('data-gs')].name); }; });
+    $('#bAdd').onclick = function () { promptBox('Nom exact du groupe WhatsApp', 'Ex : Retour CASA Sonicod').then(addGroup); };
+    $('#bRun').onclick = function () {
+      if (!st.files) { toast('Autorisez d\'abord le dossier WhatsApp', 'err'); return; }
+      var b = this; b.disabled = true; b.innerHTML = '<i class="spin"></i> Lecture des groupes…';
+      nat('botRun').then(function (r) {
+        toast(r.ok ? (r.sent ? '✓ ' + r.sent + ' groupe(s) envoyé(s) au Sheet' : 'Rien de nouveau ✓') : (r.error || 'Erreur – voir le journal'), r.ok ? 'ok' : 'err');
+        render();
+      });
+    };
+  };
+
+  /* ================= PARTAGER (WhatsApp → Gestion Retour) ================= */
+  ROUTES.partage = function () {
+    var sh = state.share;
+    if (!sh) { go('attente', {}, { replace: true }); return; }
+    setHeader('Retour d\'un groupe', 'Photos et bon reçus dans WhatsApp → En attente');
+    var st = botStatus() || {};
+    var groups = st.groups || {};
+    var gnames = Object.keys(groups);
+    view(
+      '<div class="card"><div class="sec"><span class="num">1</span><b>Reçu</b><small>' + sh.photos.length + ' photo(s) · ' + sh.files.length + ' PDF</small></div>' +
+      '<div class="photos">' + sh.photos.map(function (p, i) { return '<div class="ph"><img src="' + esc(p.thumb) + '" alt=""><span class="n">' + (i + 1) + '</span></div>'; }).join('') + '</div>' +
+      (sh.files.length ? '<div class="pdocs">' + sh.files.map(function (f) { return '<span class="pdoc">📄 ' + esc(f.name) + '</span>'; }).join('') + '</div>' : '') + '</div>' +
+      '<div class="card"><div class="sec"><span class="num">2</span><b>Groupe / ville</b></div>' +
+      (gnames.length ? '<div class="chips" id="shG">' + gnames.map(function (g, i) {
+        return '<button class="chip' + (sh.group === g ? ' on' : '') + '" data-sg="' + i + '">' + esc(g) + ' · ' + esc(groups[g]) + '</button>';
+      }).join('') + '</div>' : '') +
+      '<div class="field"><select class="input" id="shV">' + cityOptions(sh.livreur) + '</select></div></div>' +
+      '<div class="card"><div class="sec"><span class="num">3</span><b>Date et colis</b></div>' +
+      '<div class="row2"><div class="field"><label>Date</label><input class="input" type="date" id="shD" value="' + esc(sh.date) + '"></div>' +
+      '<div class="field"><label>Colis <span class="opt" id="shO">' + (sh.ocr === 'wait' ? 'lecture…' : sh.ocr === 'none' ? 'étiquette non lue' : 'lu sur l\'étiquette') + '</span></label>' +
+      '<input class="input" type="number" min="1" inputmode="numeric" id="shC" value="' + esc(sh.colis) + '" placeholder="?"></div></div></div>' +
+      '<button class="btn btn-recv" id="shSend">' + ic('check') + 'Envoyer dans « En attente »</button>' +
+      '<button class="btn btn-ghost" id="shNo">Annuler</button>'
+    );
+    $$('[data-sg]').forEach(function (b) {
+      b.onclick = function () { sh.group = gnames[+b.getAttribute('data-sg')]; sh.livreur = groups[sh.group]; render(); };
+    });
+    $('#shV').onchange = function () { sh.livreur = this.value; if (sh.group && groups[sh.group] !== sh.livreur) sh.group = ''; render(); };
+    $('#shD').onchange = function () { sh.date = this.value; };
+    $('#shC').oninput = function () { sh.colis = this.value; };
+    $('#shNo').onclick = function () { state.share = null; go('attente', {}, { replace: true }); };
+    if (sh.ocr === 'wait' && sh.photos.length && NATIVE && NATIVE.ocrPhotos) {
+      sh.ocr = 'run';
+      nat('ocrPhotos', JSON.stringify(sh.photos.map(function (p) { return p.id; }))).then(function (r) {
+        sh.ocr = r.colis ? 'ok' : 'none';
+        if (r.colis && !sh.colis) sh.colis = String(r.colis);
+        sh.brvs = r.brvs || [];
+        if (state.route === 'partage' && state.share === sh) render();
+      });
+    } else if (sh.ocr === 'wait') sh.ocr = 'none';
+    $('#shSend').onclick = function () {
+      if (!sh.livreur) { toast('Choisissez le groupe ou la ville', 'err'); return; }
+      if (!sh.date) { toast('Choisissez la date', 'err'); return; }
+      var b = this; b.disabled = true; b.innerHTML = '<i class="spin"></i> Envoi au Sheet…';
+      var pid = 'wa-' + jhash((sh.group || sh.livreur) + '|' + sh.date);
+      var note = (sh.group || 'Partage WhatsApp') + (sh.brvs && sh.brvs.length ? ' · ' + sh.brvs.join(', ') : '');
+      nat('apiWithPhotos', JSON.stringify({ action: 'addPending', pid: pid, livreur: sh.livreur, colis: sh.colis || '', date: sh.date, note: note }),
+        JSON.stringify(sh.photos.map(function (p) { return p.id; })), JSON.stringify(sh.files)).then(function (r) {
+        if (!r.ok) { b.disabled = false; b.innerHTML = ic('check') + 'Envoyer dans « En attente »'; toast(r.error || 'Erreur', 'err'); return; }
+        sh.photos.forEach(function (p) { NATIVE.deletePhoto(p.id); });
+        state.share = null;
+        toast(r.data && r.data.created ? '✓ Ajouté dans En attente' : '✓ Ajouté au retour du jour', 'ok');
+        go('attente', {}, { replace: true });
+        loadPending(false);
+      });
+    };
+  };
+
   /* ================= PARAMÈTRES ================= */
   ROUTES.settings = function () {
     var inf = info();
@@ -879,6 +1038,7 @@
     view(
       '<div class="card"><label class="kv"><span><b>Scan en continu</b><br><span class="small muted">Le scanner se rouvre après chaque colis</span></span>' +
       '<span class="switch"><input type="checkbox" id="rafale"' + (state.rafale ? ' checked' : '') + '><span></span></span></label></div>' +
+      (NATIVE && NATIVE.botStatus ? '<button class="btn btn-outline" id="sBot">' + ic('wa') + 'Bot WhatsApp du téléphone</button>' : '') +
       '<div class="card"><div class="sec"><b>Apparence</b></div><div class="chips" id="themes">' +
       [['auto', '⚙ Auto'], ['light', '☀ Clair'], ['dark', '☾ Sombre']].map(function (t) {
         return '<button class="chip' + (t[0] === theme ? ' on' : '') + '" data-t="' + t[0] + '">' + t[1] + '</button>';
@@ -894,6 +1054,7 @@
           '</div><button class="btn btn-danger btn-sm" data-del="' + esc(o.opId) + '">✕</button></div>';
       }).join('') + '</div><button class="btn btn-ghost" id="syncNow">⟳ Envoyer maintenant</button></div>' : '')
     );
+    var sb = $('#sBot'); if (sb) sb.onclick = function () { go('bot'); };
     $('#rafale').onchange = function () { state.rafale = this.checked; store('rafale', state.rafale); };
     $$('#themes .chip').forEach(function (b) {
       b.onclick = function () { store('theme', b.getAttribute('data-t')); applyTheme(); render(); };
@@ -935,6 +1096,6 @@
   $$('#nav button').forEach(function (b) { b.onclick = function () { go(b.getAttribute('data-go')); }; });
   $('#syncPill').onclick = function () { go('settings'); };
   go('op', {}, { replace: true });
-  setTimeout(function () { window.sonicodOrphans(); }, 800);
+  setTimeout(function () { window.sonicodOrphans(); window.sonicodShareReady(); }, 800);
   if (info().serverUrl) { loadConfig(); retryScans(); }
 })();

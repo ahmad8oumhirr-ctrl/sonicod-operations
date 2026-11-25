@@ -84,6 +84,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Android 8–10 : autorisation de lire le dossier WhatsApp (bot téléphone). */
+    private val storagePerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        webView.evaluateJavascript("window.sonicodBotRefresh && window.sonicodBotRefresh()", null)
+    }
+
     private val pickImages = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
         val cb = pickCallback ?: return@registerForActivityResult
         pickCallback = null
@@ -154,6 +159,7 @@ class MainActivity : ComponentActivity() {
         handleShare(intent)
         io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)); DocStore.cleanup(this) }
         if (OpQueue.list(this).isNotEmpty()) SyncWorker.schedule(this)
+        if (WaBot.isEnabled(this)) BotWorker.schedulePeriodic(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -199,6 +205,10 @@ class MainActivity : ComponentActivity() {
                 if (::webView.isInitialized) webView.evaluateJavascript("window.sonicodShareReady && window.sonicodShareReady()", null)
             }
         }
+    }
+
+    private fun openAppInfo() {
+        try { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (e: Exception) {}
     }
 
     private fun displayName(uri: Uri): String? = try {
@@ -367,6 +377,64 @@ class MainActivity : ComponentActivity() {
         }
 
         /** Renvoie (une seule fois) le contenu partagé depuis WhatsApp, ou "". */
+        /* ---------- Bot WhatsApp du téléphone ---------- */
+        @JavascriptInterface
+        fun botStatus(): String = WaBot.status(this@MainActivity).toString()
+
+        @JavascriptInterface
+        fun botSetEnabled(on: Boolean) = WaBot.setEnabled(this@MainActivity, on)
+
+        @JavascriptInterface
+        fun botSetGroups(json: String) { try { WaBot.setGroups(this@MainActivity, JSONObject(json)) } catch (e: Exception) {} }
+
+        @JavascriptInterface
+        fun botOpenNotif() = runOnUiThread {
+            try { startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch (e: Exception) { openAppInfo() }
+        }
+
+        @JavascriptInterface
+        fun botOpenFiles() = runOnUiThread {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+                } catch (e: Exception) {
+                    try { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } catch (e2: Exception) { openAppInfo() }
+                }
+            } else storagePerm.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+        @JavascriptInterface
+        fun botTestMode(on: Boolean) = WaBot.setTestMode(this@MainActivity, on)
+
+        @JavascriptInterface
+        fun botOpenAppInfo() = runOnUiThread { openAppInfo() }
+
+        @JavascriptInterface
+        fun botRun(cb: String) {
+            io.execute {
+                val r = try { WaBot.run(this@MainActivity) } catch (e: Exception) { JSONObject().put("ok", false).put("error", e.message ?: "Erreur") }
+                reply(cb, r)
+            }
+        }
+
+        /** Lit le nombre de colis sur les étiquettes des photos partagées. */
+        @JavascriptInterface
+        fun ocrPhotos(cb: String, idsJson: String) {
+            io.execute {
+                val ids = try { JSONArray(idsJson) } catch (e: Exception) { JSONArray() }
+                val brvs = LinkedHashMap<String, Int>()
+                for (i in 0 until ids.length()) {
+                    val f = PhotoStore.file(this@MainActivity, ids.optString(i)) ?: continue
+                    val lab = WaBot.readLabel(this@MainActivity, f) ?: continue
+                    val c = lab.colis ?: continue
+                    val k = lab.brv.ifEmpty { "n$c" }
+                    brvs[k] = maxOf(brvs[k] ?: 0, c)
+                }
+                reply(cb, JSONObject().put("ok", true).put("colis", if (brvs.isEmpty()) JSONObject.NULL else brvs.values.sum())
+                    .put("brvs", JSONArray(brvs.keys.filter { it.startsWith("BRV") })))
+            }
+        }
+
         @JavascriptInterface
         fun takeOrphans(): String = synchronized(this@MainActivity) {
             val v = orphanPhotos.toString()
