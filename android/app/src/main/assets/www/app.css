@@ -220,3 +220,48 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:36px;
 .blog{white-space:pre-wrap;font-size:12px;line-height:1.5;margin:0;color:var(--muted);font-family:ui-monospace,Menlo,monospace;max-height:260px;overflow:auto}
 .cities{margin-bottom:12px}
 .note a{color:var(--brand);font-weight:700}
+
+/* ============================================================
+   STYLES DE COULEURS (Réglages → Couleurs)
+   ============================================================ */
+/* 1) SONICOD — dégradé magenta → violet du logo (par défaut) */
+[data-pal=sonicod]{
+  --grad:linear-gradient(135deg,#E0168F 0%,#8E2BC0 100%);
+  --head:linear-gradient(135deg,#B3127D 0%,#5A1E8C 100%);
+  --brand:#9B1FB0; --brand-d:#4E1A73; --accent:#E0168F; --brand-50:#FBEAF5; --brand-100:#F2CFE6;
+  --bg:#F6F3F8; --nav-on:#C2127F;
+}
+[data-pal=sonicod][data-theme=dark]{
+  --brand:#FF5CB8; --brand-50:#2C1631; --brand-100:#43203F; --accent:#FF3FA4;
+  --bg:#100B15; --card:#1B1421; --line:#2E2236; --input:#150F1A; --nav:#140E19; --sheet:#1B1421; --muted:#AA9DB6;
+  --head:linear-gradient(135deg,#8E0F66 0%,#3E1563 100%); --nav-on:#FF5CB8;
+}
+[data-pal=sonicod] .top{background:var(--head);border-bottom:0}
+[data-pal=sonicod] .btn-primary,[data-pal=sonicod] .btn-finish,[data-pal=sonicod] .chip.on,[data-pal=sonicod] .steps span.on,
+[data-pal=sonicod] .sec .num,[data-pal=sonicod] .switch input:checked + span{background:var(--grad);color:#fff;border-color:transparent}
+[data-pal=sonicod] .scan-btn,[data-pal=sonicod][data-theme=dark] .scan-btn{background:var(--grad);color:#fff;border:0;box-shadow:0 8px 24px rgba(224,22,143,.28)}
+[data-pal=sonicod] .btn-primary{box-shadow:0 6px 18px rgba(224,22,143,.25)}
+[data-pal=sonicod] .nav button.on{color:var(--nav-on)}
+[data-pal=sonicod] .btn:disabled{opacity:.45}
+
+/* 2) NOIR & JAUNE — fort contraste, l'éclair jaune du logo */
+[data-pal=jaune]{
+  --brand:#16141A; --brand-d:#111013; --accent:#FFD60A; --brand-50:#FFF8D6; --brand-100:#F5E7A1; --bg:#F4F3F1; --nav-on:#16141A;
+}
+[data-pal=jaune][data-theme=dark]{
+  --brand:#FFD60A; --brand-d:#000; --brand-50:#2A2713; --brand-100:#3D381A; --accent:#FFD60A;
+  --bg:#0B0B0D; --card:#17171A; --line:#2A2A2F; --input:#111114; --nav:#111114; --sheet:#17171A; --ink:#F2F2F2; --muted:#A3A3A8; --nav-on:#FFD60A;
+}
+[data-pal=jaune] .top{background:#111013;border-bottom:3px solid #FFD60A}
+[data-pal=jaune] .btn-primary,[data-pal=jaune] .btn-finish,[data-pal=jaune] .chip.on,[data-pal=jaune] .steps span.on,
+[data-pal=jaune] .sec .num,[data-pal=jaune] .switch input:checked + span{background:#FFD60A;color:#111;border-color:#FFD60A}
+[data-pal=jaune] .scan-btn,[data-pal=jaune][data-theme=dark] .scan-btn{background:#FFD60A;color:#111;border:0}
+[data-pal=jaune] .scan-btn svg{color:#111}
+[data-pal=jaune] .nav button.on{color:var(--nav-on)}
+[data-pal=jaune] .btn:disabled{opacity:.4}
+
+/* 3) VIOLET — l'ancien style */
+.pal-row{display:flex;margin:-4px}
+.pal{flex:1;margin:4px;border:2px solid var(--line);border-radius:12px;padding:8px;background:var(--card);text-align:center;font-weight:700;font-size:13px;color:var(--ink)}
+.pal.on{border-color:var(--brand)}
+.pal i{display:block;height:34px;border-radius:8px;margin-bottom:6px}

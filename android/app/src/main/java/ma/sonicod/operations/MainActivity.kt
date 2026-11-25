@@ -309,6 +309,17 @@ class MainActivity : ComponentActivity() {
         fun setName(name: String) = Session.setName(this@MainActivity, name)
 
         /** Couleur des barres système selon le thème (clair / sombre). */
+        /** Couleurs des barres Android (haut / bas) selon le style choisi. */
+        @JavascriptInterface
+        fun setBars(status: String, nav: String) {
+            runOnUiThread {
+                try {
+                    window.statusBarColor = android.graphics.Color.parseColor(status)
+                    window.navigationBarColor = android.graphics.Color.parseColor(nav)
+                } catch (e: Exception) {}
+            }
+        }
+
         @JavascriptInterface
         fun setDark(dark: Boolean) {
             runOnUiThread {

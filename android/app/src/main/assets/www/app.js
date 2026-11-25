@@ -81,8 +81,12 @@
   function applyTheme() {
     var pref = store('theme') || 'auto';
     var dark = pref === 'dark' || (pref === 'auto' && info().systemDark);
+    var pal = store('pal') || 'sonicod';
     document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-    if (NATIVE && NATIVE.setDark) NATIVE.setDark(dark);
+    document.documentElement.setAttribute('data-pal', pal);
+    var bars = { sonicod: dark ? ['#8E0F66', '#140E19'] : ['#B3127D', '#FFFFFF'], jaune: dark ? ['#000000', '#111114'] : ['#111013', '#FFFFFF'], violet: dark ? ['#1E1129', '#141019'] : ['#4A1D66', '#FFFFFF'] }[pal];
+    if (NATIVE && NATIVE.setBars && bars) NATIVE.setBars(bars[0], bars[1]);
+    else if (NATIVE && NATIVE.setDark) NATIVE.setDark(dark);
   }
 
   /* ================= état ================= */
@@ -1040,6 +1044,10 @@
       '<div class="card"><label class="kv"><span><b>Scan en continu</b><br><span class="small muted">Le scanner se rouvre après chaque colis</span></span>' +
       '<span class="switch"><input type="checkbox" id="rafale"' + (state.rafale ? ' checked' : '') + '><span></span></span></label></div>' +
       (NATIVE && NATIVE.botStatus ? '<button class="btn btn-outline" id="sBot">' + ic('wa') + 'Bot WhatsApp du téléphone</button>' : '') +
+      '<div class="card"><div class="sec"><b>Couleurs</b></div><div class="pal-row" id="pals">' +
+      [['sonicod', 'Sonicod', 'linear-gradient(135deg,#E0168F,#8E2BC0)'], ['jaune', 'Noir & Jaune', 'linear-gradient(135deg,#111 50%,#FFD60A 50%)'], ['violet', 'Violet', '#6E2B92']].map(function (x) {
+        return '<button class="pal' + ((store('pal') || 'sonicod') === x[0] ? ' on' : '') + '" data-pal="' + x[0] + '"><i style="background:' + x[2] + '"></i>' + x[1] + '</button>';
+      }).join('') + '</div></div>' +
       '<div class="card"><div class="sec"><b>Apparence</b></div><div class="chips" id="themes">' +
       [['auto', '⚙ Auto'], ['light', '☀ Clair'], ['dark', '☾ Sombre']].map(function (t) {
         return '<button class="chip' + (t[0] === theme ? ' on' : '') + '" data-t="' + t[0] + '">' + t[1] + '</button>';
@@ -1056,6 +1064,7 @@
       }).join('') + '</div><button class="btn btn-ghost" id="syncNow">⟳ Envoyer maintenant</button></div>' : '')
     );
     var sb = $('#sBot'); if (sb) sb.onclick = function () { go('bot'); };
+    $$('#pals .pal').forEach(function (b) { b.onclick = function () { store('pal', b.getAttribute('data-pal')); applyTheme(); render(); }; });
     $('#rafale').onchange = function () { state.rafale = this.checked; store('rafale', state.rafale); };
     $$('#themes .chip').forEach(function (b) {
       b.onclick = function () { store('theme', b.getAttribute('data-t')); applyTheme(); render(); };
