@@ -153,9 +153,8 @@ object WaBot {
             !conv.isNullOrBlank() -> conv
             isGroup -> title
             title.contains(": ") -> title.substringBefore(": ")   // anciens WhatsApp : « Groupe: Expéditeur »
-            else -> return                                         // discussion privée
+            else -> ""   // discussion privée : notée seulement pour que sa photo ne soit pas prise pour celle d'un groupe
         }.replace(COUNT_SUFFIX, "").trim()
-        if (group.isEmpty()) return
 
         val msgs = ArrayList<Pair<String, Long>>()
         val arr = ex.getParcelableArray(Notification.EXTRA_MESSAGES)
@@ -169,7 +168,7 @@ object WaBot {
 
         var added = 0
         edit(ctx) { o ->
-            o.obj("seen").put(group, sbn.postTime)
+            if (group.isNotEmpty()) o.obj("seen").put(group, sbn.postTime)
             val ev = o.arr("events")
             val keys = HashSet<String>()
             for (i in 0 until ev.length()) keys.add(ev.getJSONObject(i).optString("id"))
@@ -340,6 +339,7 @@ object WaBot {
 
     /** Ville du groupe (nom exact, sinon nom proche). */
     private fun matchGroup(groups: JSONObject, g: String): String? {
+        if (g.isBlank()) return null
         if (groups.has(g)) return groups.optString(g).ifEmpty { null }
         val ng = norm(g)
         for (k in groups.keys()) { val nk = norm(k); if (nk.isNotEmpty() && (nk == ng || ng.contains(nk) || nk.contains(ng))) return groups.optString(k).ifEmpty { null } }
