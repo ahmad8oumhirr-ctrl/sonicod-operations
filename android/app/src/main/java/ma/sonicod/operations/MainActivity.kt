@@ -254,8 +254,8 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun setDark(dark: Boolean) {
             runOnUiThread {
-                window.navigationBarColor = if (dark) 0xFF17111E.toInt() else 0xFFFFFFFF.toInt()
-                window.statusBarColor = if (dark) 0xFF5E0B44.toInt() else 0xFFCF118B.toInt()
+                window.navigationBarColor = if (dark) 0xFF141019.toInt() else 0xFFFFFFFF.toInt()
+                window.statusBarColor = if (dark) 0xFF1E1129.toInt() else 0xFF4A1D66.toInt()
             }
         }
 

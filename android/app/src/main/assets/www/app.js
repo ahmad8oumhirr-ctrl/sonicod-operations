@@ -340,7 +340,7 @@
         '<p class="muted small">Vous pouvez déjà envoyer sur WhatsApp.' + (L.photoIds.length ? ' Les photos sont envoyées en arrière-plan.' : '') + '</p>';
       setHeader('Enregistrement…', L.op.livreur + ' · ' + L.op.colis + ' colis');
     } else if (L.error) {
-      el.innerHTML = '<div class="success-ic err">!</div><b>Pas enregistrée</b><p class="small" style="color:var(--red)">' + esc(L.error) + '</p>' +
+      el.innerHTML = '<div class="success-ic err">!</div><b>Pas enregistrée</b><p class="small" style="color:var(--bad)">' + esc(L.error) + '</p>' +
         '<button class="btn btn-primary" id="fixOp">Corriger l\'opération</button>';
       setHeader('Erreur', L.op.livreur);
       $('#fixOp').onclick = function () { state.draft = L.draft; state.draft.opId = uuid(); go('op', {}, { replace: true }); };
@@ -388,7 +388,7 @@
       $('#share').disabled = true; $('#share').innerHTML = '<i class="spin"></i> Préparation des photos…';
       setTimeout(function () {
       var r = NATIVE.shareWhatsApp(text, JSON.stringify(L.photoIds), line1, line2);
-      $('#share').disabled = false; $('#share').innerHTML = ic('wa') + 'Envoyer sur WhatsApp (photos + message)';
+      $('#share').disabled = false; $('#share').innerHTML = ic('wa') + 'Envoyer sur WhatsApp';
       $('#waNote').innerHTML = r === 'error'
         ? '<div class="note" style="margin-top:12px">Impossible d\'ouvrir le partage. Le message a été copié : ouvrez le groupe et collez-le.</div>'
         : '<div class="note info" style="margin-top:12px">' + (r === 'whatsapp' ? 'WhatsApp est ouvert.' : 'Choisissez WhatsApp dans la liste.') +
@@ -875,7 +875,7 @@
       (q.length ? '<div class="card"><div class="sec"><b>Opérations en attente</b><small>' + q.length + '</small></div><div class="list">' + q.map(function (o) {
         return '<div class="item"><div class="av">' + esc(initials(o.livreur)) + '</div><div class="main"><div class="t1">' + esc(o.livreur) + ' · ' + esc(o.colis) + ' colis</div>' +
           '<div class="t2">' + esc(fmtDate(o.dateReception)) + ' · ' + o.photos + ' photo(s)</div>' +
-          (o.lastError ? '<div class="t2" style="color:var(--red);white-space:normal">' + esc(o.lastError) + '</div>' : '') +
+          (o.lastError ? '<div class="t2" style="color:var(--bad);white-space:normal">' + esc(o.lastError) + '</div>' : '') +
           '</div><button class="btn btn-danger btn-sm" data-del="' + esc(o.opId) + '">✕</button></div>';
       }).join('') + '</div><button class="btn btn-ghost" id="syncNow">⟳ Envoyer maintenant</button></div>' : '')
     );
