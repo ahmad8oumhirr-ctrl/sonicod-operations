@@ -683,6 +683,20 @@
   };
 
   function driveId(url) { var m = /[-\w]{25,}/.exec(String(url || '')); return m ? m[0] : ''; }
+  function daysBetween(a, b) {
+    var x = /^(\d{4})-(\d{2})-(\d{2})$/.exec(a || ''), y = /^(\d{4})-(\d{2})-(\d{2})$/.exec(b || '');
+    if (!x || !y) return null;
+    return Math.round((Date.UTC(+y[1], +y[2] - 1, +y[3]) - Date.UTC(+x[1], +x[2] - 1, +x[3])) / 86400000);
+  }
+  /** Retard : depuis la date du groupe jusqu'à aujourd'hui (ou jusqu'à la validation). */
+  function retardHtml(p) {
+    var waiting = p.statut !== 'VALIDER';
+    var n = daysBetween(p.date, waiting ? todayIso() : (p.dateValidation || ''));
+    if (n == null) return '';
+    if (!waiting) return '<span class="ret ret-ok">✓ validé en ' + (n <= 0 ? 'le jour même' : n + ' jour' + (n > 1 ? 's' : '')) + '</span>';
+    var cls = n >= 3 ? 'ret-late' : (n >= 1 ? 'ret-warn' : 'ret-ok');
+    return '<span class="ret ' + cls + '">⏱ ' + (n <= 0 ? 'Aujourd\'hui' : n + ' jour' + (n > 1 ? 's' : '') + ' de retard') + '</span>';
+  }
   function pendItemHtml(p, i) {
     var waiting = p.statut !== 'VALIDER';
     var thumbs = (p.photoLinks || []).slice(0, 6).map(function (u) {
@@ -691,10 +705,11 @@
     var docs = (p.docs || []).map(function (d) {
       return '<a href="#" class="pdoc" data-url="' + esc(d.url) + '">📄 ' + esc(String(d.label || 'Bon PDF').replace(/^📄\s*/, '')) + '</a>';
     }).join('');
-    return '<div class="pend">' +
+    return '<div class="pend" data-pi="' + i + '">' +
       '<div class="pend-h"><div class="av">' + esc(initials(p.livreur)) + '</div><div class="main"><div class="t1">' + esc(p.livreur) +
       ' <span class="badge ' + (waiting ? 'b-wait' : 'b-ok') + '">' + (waiting ? 'En attente' : 'VALIDER') + '</span></div>' +
       '<div class="t2">' + (p.colis || '?') + ' colis · ' + esc(fmtDate(p.date)) + (p.dateValidation ? ' · validé le ' + esc(fmtDate(p.dateValidation)) : '') + '</div>' +
+      '<div>' + retardHtml(p) + '</div>' +
       (p.note ? '<div class="t2">' + esc(p.note) + '</div>' : '') + '</div></div>' +
       (thumbs ? '<div class="pthumbs">' + thumbs + '</div>' : '') +
       (docs ? '<div class="pdocs">' + docs + '</div>' : '') +
@@ -703,7 +718,7 @@
   }
   function pendListHtml() {
     var l = state.pendList || [];
-    var w = l.filter(function (p) { return p.statut !== 'VALIDER'; });
+    var w = l.filter(function (p) { return p.statut !== 'VALIDER'; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
     var v = l.filter(function (p) { return p.statut === 'VALIDER'; });
     var html = w.length ? w.map(function (p) { return pendItemHtml(p, l.indexOf(p)); }).join('') : '<div class="empty">Aucun retour en attente ✓</div>';
     if (v.length) html += '<details class="pvalid"><summary>Validés (7 derniers jours) · ' + v.length + '</summary>' + v.map(function (p) { return pendItemHtml(p, l.indexOf(p)); }).join('') + '</details>';
@@ -728,6 +743,13 @@
             if (!r.ok) { b.disabled = false; toast(r.error || 'Erreur', 'err'); if (r.code === 'conflict') loadPending(true); return; }
             p.statut = 'VALIDER'; p.dateValidation = todayIso(); store('pendList', state.pendList);
             toast('✓ ' + p.livreur + ' validé', 'ok');
+            var card = b.closest('.pend');
+            if (card && !withOp) {
+              card.style.height = card.offsetHeight + 'px';
+              card.classList.add('leaving');
+              setTimeout(function () { render(); }, 650);
+              return;
+            }
             if (withOp) {
               state.draft = newDraft();
               state.draft.livreur = p.livreur; state.draft.colis = String(p.colis);

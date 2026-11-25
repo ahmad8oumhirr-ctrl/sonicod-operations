@@ -28,6 +28,7 @@ var RETOUR_FIRST_ROW = 4;
 var PENDING_SHEET = 'Retours en attente';
 var PENDING_HEADER = ['DATE', 'VILLE / LIVREUR', 'COLIS', 'STATUT', 'DATE VALIDATION', 'NOTE / GROUPE', 'PHOTOS', 'BON (PDF)', 'PAR', 'RÉF'];
 var PENDING_STATUSES = ['En attente', 'VALIDER'];
+var RETARD_COL = 11;   // colonne K : retard en jours (formule)
 
 var PHOTO_FOLDER_NAME = 'SONICOD – Photos opérations';
 var WHATSAPP_GROUP = 'https://chat.whatsapp.com/LP2gQjIm7R95AYBLIj27Ad';
@@ -394,12 +395,27 @@ function pendingSheet_() {
 }
 
 /** Liste déroulante « En attente / VALIDER » + couleurs, pour valider aussi directement dans le Sheet. */
+function retardFormula_(r) {
+  return '=IF($B' + r + '="","",IF($D' + r + '="VALIDER",IF($E' + r + '="","",INT($E' + r + ')-INT($A' + r + ')),TODAY()-INT($A' + r + ')))';
+}
+
 function pendingFormat_(sh) {
+  sh.getRange(1, RETARD_COL).setValue('RETARD (jours)').setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#6E2B92').setHorizontalAlignment('center');
+  var last = sh.getLastRow();
+  if (last >= 2) {
+    var f = [];
+    for (var r = 2; r <= last; r++) f.push([retardFormula_(r)]);
+    sh.getRange(2, RETARD_COL, last - 1, 1).setFormulas(f).setNumberFormat('0" j"').setHorizontalAlignment('center');
+  }
+  var kr = sh.getRange(2, RETARD_COL, Math.max(sh.getMaxRows() - 1, 1), 1);
   var rng = sh.getRange(2, 4, Math.max(sh.getMaxRows() - 1, 1), 1);
   rng.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(PENDING_STATUSES, true).setAllowInvalid(true).build());
   var rules = sh.getConditionalFormatRules().filter(function (r) { return !r.getRanges().some(function (x) { return x.getColumn() === 4; }); });
   rules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('En attente').setBackground('#FFF4E0').setFontColor('#B45309').setBold(true).setRanges([rng]).build());
   rules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('VALIDER').setBackground('#E7F7EE').setFontColor('#15803D').setBold(true).setRanges([rng]).build());
+  rules = rules.filter(function (x) { return !x.getRanges().some(function (g) { return g.getColumn() === RETARD_COL; }); });
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND($D2<>"VALIDER",$K2>=3)').setBackground('#FDECEC').setFontColor('#DC2626').setBold(true).setRanges([kr]).build());
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND($D2<>"VALIDER",$K2>=1)').setBackground('#FFF4E0').setFontColor('#B45309').setBold(true).setRanges([kr]).build());
   sh.setConditionalFormatRules(rules);
 }
 
@@ -455,6 +471,7 @@ function addPending_(req) {
       r = sh.getLastRow() + 1;
       sh.getRange(r, 1, 1, PENDING_HEADER.length).setValues([[d, livreur, colis, 'En attente', '', note, '', '', who, pid]]);
       sh.getRange(r, 1).setNumberFormat('dd/MM/yyyy');
+      sh.getRange(r, RETARD_COL).setFormula(retardFormula_(r)).setNumberFormat('0" j"').setHorizontalAlignment('center');
     } else {
       photoLinks = runsOf_(sh.getRange(r, 7).getRichTextValue()).map(function (x) { return x.url; }).concat(newPhotos);
       docs = runsOf_(sh.getRange(r, 8).getRichTextValue()).concat(newDocs);
