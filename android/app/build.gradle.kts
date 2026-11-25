@@ -11,8 +11,8 @@ android {
         applicationId = "ma.sonicod.operations"
         minSdk = 26
         targetSdk = 34
-        versionCode = 17
-        versionName = "4.4.0"
+        versionCode = 18
+        versionName = "4.5.0"
     }
 
     signingConfigs {

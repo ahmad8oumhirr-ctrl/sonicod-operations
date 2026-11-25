@@ -422,15 +422,16 @@ class MainActivity : ComponentActivity() {
         fun ocrPhotos(cb: String, idsJson: String) {
             io.execute {
                 val ids = try { JSONArray(idsJson) } catch (e: Exception) { JSONArray() }
-                val brvs = LinkedHashMap<String, Int>()
+                val reads = ArrayList<WaBot.Label?>()
                 for (i in 0 until ids.length()) {
                     val f = PhotoStore.file(this@MainActivity, ids.optString(i)) ?: continue
-                    val lab = WaBot.readLabel(this@MainActivity, f) ?: continue
-                    val c = lab.colis ?: continue
-                    val k = lab.brv.ifEmpty { "n$c" }
-                    brvs[k] = maxOf(brvs[k] ?: 0, c)
+                    reads.add(WaBot.readLabel(this@MainActivity, f))
                 }
-                reply(cb, JSONObject().put("ok", true).put("colis", if (brvs.isEmpty()) JSONObject.NULL else brvs.values.sum())
+                val cnt = WaBot.countColis(reads, ids.length())
+                val colis: Any = cnt.colis ?: JSONObject.NULL
+                val source = cnt.source
+                val brvs = cnt.brvs
+                reply(cb, JSONObject().put("ok", true).put("colis", colis).put("source", source)
                     .put("brvs", JSONArray(brvs.keys.filter { it.startsWith("BRV") })))
             }
         }

@@ -158,7 +158,7 @@ function remember_(id, value) {
   value.t = Date.now();
   props.setProperty(id, JSON.stringify(value));
   var all = props.getProperties();
-  var keys = Object.keys(all).filter(function (k) { return k.indexOf('op_') === 0 || k.indexOf('sc_') === 0 || k.indexOf('pd_') === 0; });
+  var keys = Object.keys(all).filter(function (k) { return k.indexOf('op_') === 0 || k.indexOf('sc_') === 0 || k.indexOf('pd_') === 0 || k.indexOf('dh_') === 0 || k.indexOf('dn_') === 0; });
   if (keys.length < 4000) return;
   var limit = Date.now() - 30 * 86400000;
   keys.forEach(function (k) {
@@ -447,6 +447,40 @@ function addPending_(req) {
     }
     var isNew = !r;
 
+    // Anti-doublon : chaque photo / bon porte un identifiant WhatsApp ; ceux déjà enregistrés sur cette ligne sont ignorés
+    // (même si le bot relit le groupe, change de PC ou si le bot Chrome et le bot téléphone lisent le même groupe).
+    var seenIds = {};
+    if (!isNew) {
+      try { JSON.parse(sh.getRange(r, 10).getNote() || '[]').forEach(function (x) { seenIds[x] = 1; }); } catch (e) {}
+      runsOf_(sh.getRange(r, 8).getRichTextValue()).forEach(function (x) { seenIds['d:' + x.label.replace(/^📄\s*/, '')] = 1; });
+    }
+    var skipped = 0;
+    photos = photos.filter(function (ph) {
+      if (!ph || !ph.b64) return false;
+      var id = String(ph.id || '');
+      if (!id) return true;
+      if (seenIds[id]) { skipped++; return false; }
+      seenIds[id] = 1; return true;
+    });
+    // Bons PDF : refusés s'ils sont déjà enregistrés N'IMPORTE OÙ dans l'onglet (même contenu, ou même nom de bon)
+    var docsRefused = [];
+    files = files.filter(function (f) {
+      if (!f || !f.b64) return false;
+      var nm = String(f.name || 'bon.pdf').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 120);
+      var id = 'd:' + nm;
+      if (seenIds[id]) { skipped++; return false; }
+      f.__h = 'dh_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, Utilities.base64Decode(f.b64))).slice(0, 22);
+      f.__n = /\d{6,}/.test(nm) ? 'dn_' + nm.toUpperCase().replace(/\s*\(\d+\)(?=\.PDF$)/, '').slice(0, 100) : '';   // nom précis (ex. BRV-2611…) seulement
+      var prev = seen_(f.__h) || (f.__n ? seen_(f.__n) : null);
+      if (prev && prev.pid !== pid) { docsRefused.push(nm + ' (déjà enregistré' + (prev.day ? ' le ' + prev.day : '') + ')'); skipped++; return false; }
+      seenIds[id] = 1; return true;
+    });
+
+    // Tout est déjà enregistré (photos / bon reposté) : on ne crée pas de ligne vide
+    if (isNew && !photos.length && !files.length && skipped) {
+      return { row: 0, created: false, duplicate: true, addedPhotos: 0, addedDocs: 0, docs: 0, skipped: skipped, docsRefused: docsRefused };
+    }
+
     // Photos et bons → Drive
     var folder = monthFolder_(d);
     var base = 'RETOUR_' + Utilities.formatDate(d, TZ, 'yyyy-MM-dd') + '_' + livreur.replace(/[^\w-]+/g, '_') + '_' + Date.now();
@@ -490,8 +524,12 @@ function addPending_(req) {
       runs.forEach(function (x) { rb.setLinkUrl(x[0], x[1], x[2]); });
       sh.getRange(r, 8).setRichTextValue(rb.build());
     }
+    var ids = Object.keys(seenIds);
+    if (ids.length) sh.getRange(r, 10).setNote(JSON.stringify(ids.slice(-400)));
+    var dayTxt = Utilities.formatDate(d, TZ, 'dd/MM/yyyy');
+    files.forEach(function (f) { remember_(f.__h, { pid: pid, row: r, day: dayTxt }); if (f.__n) remember_(f.__n, { pid: pid, row: r, day: dayTxt }); });
     remember_('pd_' + pid, { row: r });
-    return { row: r, created: isNew, duplicate: !isNew, addedPhotos: newPhotos.length, addedDocs: newDocs.length, docs: docs.length };
+    return { row: r, created: isNew, duplicate: !isNew, addedPhotos: newPhotos.length, addedDocs: newDocs.length, docs: docs.length, skipped: skipped, docsRefused: docsRefused };
   });
 }
 
@@ -596,7 +634,13 @@ function ocrLabel_(req) {
 function parseLabel_(text) {
   var t = String(text || '').replace(/\r/g, '');
   var flat = t.replace(/\s+/g, ' ');
-  var r = { colis: null, part: '', zone: '', date: '', brv: '' };
+  var r = { colis: null, part: '', zone: '', date: '', brv: '', label: false };
+  // Est-ce une étiquette / un bon ? (tolère les erreurs de lecture : « NOWE DE COLS », « GRV »…)
+  r.label = /BON\s*RETOUR|NOMBRE\s*D|N[O0][A-Z]{0,4}\s*D[EU]\s*CO[LI]{0,2}S|\b[BG8]R[VY][-\s]?\d{6,}/i.test(flat);
+  // numéros de suivi visibles sur la photo (ex. N875620619) : la même étiquette sur 2 photos = 1 seul colis
+  var tr = {};
+  (flat.toUpperCase().match(/\b[A-Z]{1,3}\d{8,12}\b/g) || []).forEach(function (x) { if (!/^[BG8]R[VY]/.test(x)) tr[x] = 1; });
+  r.tracks = Object.keys(tr).slice(0, 20);
   var m = /NOMBRE\s*D[EU]\s*COLIS\D{0,25}?(\d{1,4})/i.exec(flat);
   if (m) r.colis = Number(m[1]);
   var ci = flat.search(/COLIS/i);
@@ -607,7 +651,7 @@ function parseLabel_(text) {
   if (m) r.zone = m[1].trim().toUpperCase();
   m = /(\d{2})\s*\/\s*(\d{2})\s*\/\s*(\d{4})/.exec(flat);
   if (m) r.date = m[3] + '-' + m[2] + '-' + m[1];
-  m = /BRV[-\s]?(\d{8,20})/i.exec(flat);
+  m = /\b[BG8]R[VY][-\s]?(\d{8,20})/i.exec(flat);
   if (m) r.brv = 'BRV-' + m[1];
   return r;
 }

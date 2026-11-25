@@ -76,24 +76,30 @@
     const rows = $$('#main [role="row"]');
     let current = null;
     const imgs = [], docs = [];
+    let extra = 0;   // albums : WhatsApp montre 4 photos et « +3 » pour les autres
     rows.forEach(row => {
       const msg = row.querySelector('[data-id]');
       if (!msg) { const txt = (row.innerText || '').trim(); if (txt && txt.length < 40) current = dividerDay(txt, today, yesterday); return; }
       const day = messageDay(row, today) || current;
       if (day !== dayIso) return;
+      const mid = msg.getAttribute('data-id') || '';
+      let k = 0;
       row.querySelectorAll('img').forEach(img => {
         const src = img.getAttribute('src') || '';
         if (!src.startsWith('blob:')) return;
         if ((img.naturalWidth || 0) < 120 || (img.naturalHeight || 0) < 120) return;
         if (img.closest('header')) return;
+        img.__sncId = mid ? 'wa:' + mid + '#' + (k++) : '';   // identifiant WhatsApp du message : le même à chaque lecture
         imgs.push(img);
       });
+      const plus = Array.from(row.querySelectorAll('span, div')).find(e => e.children.length === 0 && /^\+\d{1,3}$/.test((e.textContent || '').trim()));
+      if (plus && k) extra += +plus.textContent.trim().slice(1);
       // document PDF : un élément dont le texte se termine par .pdf
       const nameEl = Array.from(row.querySelectorAll('span, div')).find(e => e.children.length === 0 && /\.pdf\s*$/i.test(e.textContent || ''));
       if (nameEl) docs.push({ name: nameEl.textContent.trim(), el: nameEl });
     });
     log('Lignes lues : ' + rows.length + ' · ' + fmt(dayIso) + ' : ' + imgs.length + ' photo(s), ' + docs.length + ' PDF');
-    return { imgs, docs };
+    return { imgs, docs, extra };
   }
 
   /** Récupère le contenu d'un PDF en cliquant dessus (capturé par hook.js, sans téléchargement). */
@@ -140,17 +146,18 @@
     const group = chatName();
     if (!group) { log('Ouvrez d\'abord un groupe dans WhatsApp.'); return null; }
     const groups = (await store.get('groups')) || {};
-    const { imgs, docs } = collectDay(dayIso);
+    const { imgs, docs, extra } = collectDay(dayIso);
     if (!imgs.length && !docs.length) { log(group + ' : rien pour ' + fmt(dayIso) + '.'); return null; }
-    const rec = { key: group + '|' + dayIso, group, day: dayIso, colis: null, brvs: {}, zone: '', photos: [], labels: [], docs: [], raw: [], livreur: groups[group] || '', checked: true, status: '', photoHashes: [] };
+    const rec = { key: group + '|' + dayIso, group, day: dayIso, colis: null, brvs: {}, zone: '', photos: [], labels: [], docs: [], raw: [], livreur: groups[group] || '', checked: true, status: '', photoHashes: [], photoIds: [], nPhotos: imgs.length + (extra || 0), labelUnread: 0, source: '' };
     results = results.filter(r => r.key !== rec.key);
     results.push(rec);
     for (let i = 0; i < imgs.length && i < 15; i++) {
       let b64;
       try { b64 = imgToB64(imgs[i]); } catch (e) { continue; }
       const ph = hash(b64.slice(0, 4000) + b64.length);
+      const pid = imgs[i].__sncId || ('h:' + ph);
       rec.raw.push({ b64, ph });
-      if (rec.photos.length < 10) { rec.photos.push(b64); rec.photoHashes.push(ph); }
+      if (rec.photos.length < 10) { rec.photos.push(b64); rec.photoHashes.push(ph); rec.photoIds.push(pid); }
     }
     for (const d of docs.slice(0, 3)) {
       const b64 = await capturePdf(d.el);
@@ -169,20 +176,18 @@
     const cache = (await store.get('ocr')) || {};
     const fresh = {};
     let idx = 0, offline = false;
+    const reads = [];
     const worker = async () => {
       while (idx < rec.raw.length && !offline) {
         const { b64, ph } = rec.raw[idx++];
         let d = cache[ph];
         if (!d) {
           const r = await api({ action: 'ocrLabel', b64 });
-          if (r.ok) { d = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone }; fresh[ph] = d; }
+          if (r.ok) { d = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone, label: r.data.label, tracks: r.data.tracks || [] }; fresh[ph] = d; }
           else if (r.network) { offline = true; log('Serveur injoignable'); }
         }
-        if (d && d.colis != null) {
-          const k = d.brv || ('n' + d.colis);
-          rec.brvs[k] = Math.max(rec.brvs[k] || 0, d.colis);
-          if (d.zone && !rec.zone) rec.zone = d.zone;
-        }
+        reads.push(d || null);
+        if (d && d.zone && !rec.zone) rec.zone = d.zone;
       }
     };
     await Promise.all([worker(), worker(), worker()]);
@@ -193,11 +198,40 @@
       await store.set('ocr', c2);
     }
     delete rec.raw;
-    rec.colis = Object.keys(rec.brvs).length ? Object.values(rec.brvs).reduce((a, b) => a + b, 0) : null;
+    const c = countColis(reads, rec.nPhotos);
+    rec.colis = c.colis; rec.source = c.source; rec.brvs = c.brvs;
     if (!rec.livreur) rec.livreur = guessCity(rec.group, rec.zone, (await store.get('groups')) || {});
     log(rec.group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF, ' + (rec.colis == null ? 'colis non lus' : rec.colis + ' colis') + '.');
     await sendRecord(rec);                      // envoi automatique au Google Sheet
     return rec;
+  }
+
+  /**
+   * Nombre de colis du groupe pour le jour :
+   *  1) étiquette « BON RETOUR » : son nombre ; la même étiquette sur plusieurs photos compte UNE fois
+   *     (même n° BRV, ou même nombre si le BRV n'a pas été lu) ;
+   *  2) étiquette présente mais illisible → vide (« à vérifier ») plutôt qu'un chiffre faux ;
+   *  3) sinon 1 photo = 1 colis, et le même n° de suivi sur 2 photos = 1 seul colis.
+   */
+  function countColis(reads, nPhotos) {
+    const brvs = {}, loose = {};
+    let unread = 0, withTrack = 0;
+    const tracks = {};
+    reads.forEach(d => {
+      if (!d) return;
+      const isLabel = d.label !== false && d.colis != null;
+      if (isLabel) { if (d.brv) brvs[d.brv] = Math.max(brvs[d.brv] || 0, d.colis); else loose[d.colis] = 1; }
+      else if (d.label) unread++;
+      else if (d.tracks && d.tracks.length) { withTrack++; d.tracks.forEach(t => { tracks[t] = 1; }); }
+    });
+    const vals = Object.values(brvs);
+    Object.keys(loose).forEach(n => { if (vals.indexOf(+n) < 0) brvs['n' + n] = +n; });
+    if (Object.keys(brvs).length) return { colis: Object.values(brvs).reduce((a, b) => a + b, 0), source: 'étiquette', brvs };
+    if (unread) return { colis: null, source: 'étiquette illisible – à vérifier', brvs };
+    const labelsRead = reads.filter(d => d && d.label !== false && d.colis != null).length;
+    const n = Object.keys(tracks).length + Math.max(0, nPhotos - withTrack - labelsRead);
+    if (!n) return { colis: null, source: '', brvs };
+    return { colis: n, source: 'compté : ' + n + ' colis' + (n !== nPhotos ? ' sur ' + nPhotos + ' photo(s)' : ' (' + nPhotos + ' photo(s))'), brvs };
   }
 
   /** Lire le groupe ouvert. */
@@ -355,14 +389,17 @@
     const sent = (await store.get('sent')) || {};
     const done = sent[pid] || { p: [], d: [], c: null };
     const photos = [], ph = [];
-    r.photos.forEach((b64, i) => { const h = r.photoHashes[i]; if (done.p.indexOf(h) < 0) { photos.push({ b64 }); ph.push(h); } });
+    r.photos.forEach((b64, i) => {
+      const id = (r.photoIds && r.photoIds[i]) || ('h:' + r.photoHashes[i]);
+      if (done.p.indexOf(id) < 0 && done.p.indexOf(r.photoHashes[i]) < 0) { photos.push({ b64, id }); ph.push(id); }
+    });
     const files = r.docs.filter(d => done.d.indexOf(d.name) < 0).map(d => ({ b64: d.b64, name: d.name, mime: 'application/pdf' }));
     if (done.c === r.colis && !photos.length && !files.length && done.l === r.livreur) { r.status = 'ok'; r.msg = '✓ Déjà à jour dans le Sheet'; renderResults(); return; }
     log('Envoi ' + r.group + ' au Sheet…');
     const brv = Object.keys(r.brvs).filter(k => k.startsWith('BRV'));
     const res = await api({
       action: 'addPending', pid, livreur: r.livreur, colis: r.colis || '', date: r.day, who: 'Bot WhatsApp',
-      note: r.group + (brv.length ? ' · ' + brv.join(', ') : ''), photos, files
+      note: r.group + (r.source ? ' · ' + r.source : '') + (brv.length ? ' · ' + brv.join(', ') : ''), photos, files
     });
     if (res.ok) {
       done.p = done.p.concat(ph); done.d = done.d.concat(files.map(f => f.name)); done.c = r.colis; done.l = r.livreur;
@@ -370,7 +407,8 @@
       const keys = Object.keys(sent); if (keys.length > 300) keys.slice(0, 100).forEach(k => delete sent[k]);
       await store.set('sent', sent);
       r.status = 'ok';
-      r.msg = (res.data.created ? '✓ Ajouté au Sheet' : '✓ Mis à jour') + ' (ligne ' + res.data.row + ')' +
+      if (res.data.docsRefused && res.data.docsRefused.length) log('Bon déjà enregistré, ignoré : ' + res.data.docsRefused.join(', '));
+      r.msg = (!res.data.row ? '✓ Déjà dans le Sheet (doublon ignoré)' : (res.data.created ? '✓ Ajouté au Sheet' : '✓ Mis à jour') + ' (ligne ' + res.data.row + ')') + (res.data.skipped ? ' · ' + res.data.skipped + ' doublon(s) ignoré(s)' : '') +
         (res.data.addedPhotos ? ' · +' + res.data.addedPhotos + ' photo(s)' : '') + (res.data.addedDocs ? ' · +' + res.data.addedDocs + ' PDF' : '');
     } else { r.status = 'err'; r.msg = res.error || 'Erreur'; }
     renderResults();

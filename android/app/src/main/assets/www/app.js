@@ -989,7 +989,7 @@
       '<div class="field"><select class="input" id="shV">' + cityOptions(sh.livreur) + '</select></div></div>' +
       '<div class="card"><div class="sec"><span class="num">3</span><b>Date et colis</b></div>' +
       '<div class="row2"><div class="field"><label>Date</label><input class="input" type="date" id="shD" value="' + esc(sh.date) + '"></div>' +
-      '<div class="field"><label>Colis <span class="opt" id="shO">' + (sh.ocr === 'wait' ? 'lecture…' : sh.ocr === 'none' ? 'étiquette non lue' : 'lu sur l\'étiquette') + '</span></label>' +
+      '<div class="field"><label>Colis <span class="opt" id="shO">' + (sh.ocr === 'wait' || sh.ocr === 'run' ? 'lecture…' : esc(sh.source || '')) + '</span></label>' +
       '<input class="input" type="number" min="1" inputmode="numeric" id="shC" value="' + esc(sh.colis) + '" placeholder="?"></div></div></div>' +
       '<button class="btn btn-recv" id="shSend">' + ic('check') + 'Envoyer dans « En attente »</button>' +
       '<button class="btn btn-ghost" id="shNo">Annuler</button>'
@@ -1006,7 +1006,8 @@
       nat('ocrPhotos', JSON.stringify(sh.photos.map(function (p) { return p.id; }))).then(function (r) {
         sh.ocr = r.colis ? 'ok' : 'none';
         if (r.colis && !sh.colis) sh.colis = String(r.colis);
-        sh.brvs = r.brvs || [];
+        sh.ocrColis = r.colis ? String(r.colis) : '';
+        sh.brvs = r.brvs || []; sh.source = r.source || '';
         if (state.route === 'partage' && state.share === sh) render();
       });
     } else if (sh.ocr === 'wait') sh.ocr = 'none';
@@ -1015,7 +1016,7 @@
       if (!sh.date) { toast('Choisissez la date', 'err'); return; }
       var b = this; b.disabled = true; b.innerHTML = '<i class="spin"></i> Envoi au Sheet…';
       var pid = 'wa-' + jhash((sh.group || sh.livreur) + '|' + sh.date);
-      var note = (sh.group || 'Partage WhatsApp') + (sh.brvs && sh.brvs.length ? ' · ' + sh.brvs.join(', ') : '');
+      var note = (sh.group || 'Partage WhatsApp') + (sh.source && String(sh.colis) === String(sh.ocrColis) ? ' · ' + sh.source : '') + (sh.brvs && sh.brvs.length ? ' · ' + sh.brvs.join(', ') : '');
       nat('apiWithPhotos', JSON.stringify({ action: 'addPending', pid: pid, livreur: sh.livreur, colis: sh.colis || '', date: sh.date, note: note }),
         JSON.stringify(sh.photos.map(function (p) { return p.id; })), JSON.stringify(sh.files)).then(function (r) {
         if (!r.ok) { b.disabled = false; b.innerHTML = ic('check') + 'Envoyer dans « En attente »'; toast(r.error || 'Erreur', 'err'); return; }

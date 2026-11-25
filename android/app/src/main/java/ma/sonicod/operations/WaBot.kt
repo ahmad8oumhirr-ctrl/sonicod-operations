@@ -228,7 +228,7 @@ object WaBot {
 
     /* ---------------- lecture d'étiquette ---------------- */
 
-    data class Label(val colis: Int?, val brv: String, val zone: String)
+    data class Label(val colis: Int?, val brv: String, val zone: String, val label: Boolean = false, val tracks: List<String> = emptyList())
 
     fun parseLabel(text: String): Label {
         val flat = text.replace(Regex("\\s+"), " ")
@@ -239,8 +239,13 @@ object WaBot {
         if (colis == null && p != null) colis = p.groupValues[1].toIntOrNull()
         val zone = Regex("Zone\\s*:?\\s*((?:HUB\\s+)?[A-Z][A-Za-zÉÈéè'\\- ]{2,25}?)(?=\\s+(?:Date|Magasin|T[ée]l|Adresse|NOMBRE|\\d)|$)", RegexOption.IGNORE_CASE)
             .find(flat)?.groupValues?.get(1)?.trim()?.uppercase(Locale.ROOT) ?: ""
-        val brv = Regex("BRV[-\\s]?(\\d{8,20})", RegexOption.IGNORE_CASE).find(flat)?.let { "BRV-" + it.groupValues[1] } ?: ""
-        return Label(if (colis != null && colis > 0) colis else null, brv, zone)
+        val brv = Regex("\\b[BG8]R[VY][-\\s]?(\\d{8,20})", RegexOption.IGNORE_CASE).find(flat)?.let { "BRV-" + it.groupValues[1] } ?: ""
+        // étiquette / bon (tolère les erreurs de lecture : « NOWE DE COLS », « GRV »…)
+        val isLabel = Regex("BON\\s*RETOUR|NOMBRE\\s*D|N[O0][A-Z]{0,4}\\s*D[EU]\\s*CO[LI]{0,2}S|\\b[BG8]R[VY][-\\s]?\\d{6,}", RegexOption.IGNORE_CASE).containsMatchIn(flat)
+        // n° de suivi visibles (ex. N875620619) : la même étiquette sur 2 photos = 1 seul colis
+        val tracks = Regex("\\b[A-Z]{1,3}\\d{8,12}\\b").findAll(flat.uppercase(Locale.ROOT)).map { it.value }
+            .filter { !Regex("^[BG8]R[VY]").containsMatchIn(it) }.distinct().take(20).toList()
+        return Label(if (isLabel && colis != null && colis > 0) colis else null, brv, zone, isLabel, tracks)
     }
 
     /** Lit le texte d'une photo sur le téléphone (ML Kit), sinon via le serveur Google. */
@@ -267,8 +272,36 @@ object WaBot {
             PhotoStore.delete(ctx, id)
             val r = Api.post(Session.serverUrl(ctx), JSONObject().put("action", "ocrLabel").put("key", APP_KEY).put("b64", b64).toString())
             val d = r.optJSONObject("data")
-            if (r.optBoolean("ok") && d != null) Label(d.optInt("colis", 0).takeIf { it > 0 }, d.optString("brv"), d.optString("zone")) else null
+            if (r.optBoolean("ok") && d != null) Label(d.optInt("colis", 0).takeIf { it > 0 }, d.optString("brv"), d.optString("zone"), d.optBoolean("label", d.optInt("colis", 0) > 0),
+                d.optJSONArray("tracks")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()) else null
         } catch (e: Exception) { null }
+    }
+
+    data class Count(val colis: Int?, val source: String, val brvs: Map<String, Int>)
+
+    /**
+     * Nombre de colis (mêmes règles que le bot Chrome) :
+     *  1) étiquette « BON RETOUR » : la même étiquette sur plusieurs photos compte une fois ;
+     *  2) étiquette illisible → vide (« à vérifier ») ;
+     *  3) sinon 1 photo = 1 colis, et le même n° de suivi sur 2 photos = 1 colis.
+     */
+    fun countColis(reads: List<Label?>, nPhotos: Int): Count {
+        val brvs = LinkedHashMap<String, Int>()
+        val loose = LinkedHashSet<Int>()
+        val tracks = HashSet<String>()
+        var unread = 0; var withTrack = 0; var labelsRead = 0
+        for (d in reads) {
+            if (d == null) continue
+            if (d.label && d.colis != null) { labelsRead++; if (d.brv.isNotEmpty()) brvs[d.brv] = maxOf(brvs[d.brv] ?: 0, d.colis) else loose.add(d.colis) }
+            else if (d.label) unread++
+            else if (d.tracks.isNotEmpty()) { withTrack++; tracks.addAll(d.tracks) }
+        }
+        loose.forEach { n -> if (n !in brvs.values) brvs["n$n"] = n }
+        if (brvs.isNotEmpty()) return Count(brvs.values.sum(), "étiquette", brvs)
+        if (unread > 0) return Count(null, "étiquette illisible – à vérifier", brvs)
+        val n = tracks.size + maxOf(0, nPhotos - withTrack - labelsRead)
+        if (n == 0) return Count(null, "", brvs)
+        return Count(n, "compté : $n colis" + (if (n != nPhotos) " sur $nPhotos photo(s)" else " ($nPhotos photo(s))"), brvs)
     }
 
     /** Même identifiant que le bot Chrome (« wa- » + hash de « groupe|jour ») : une seule ligne par groupe et par jour. */
@@ -354,19 +387,24 @@ object WaBot {
         val doneD = done.optJSONArray("d") ?: JSONArray()
         val doneSet = HashSet<String>().apply { for (i in 0 until doneP.length()) add(doneP.getString(i)); for (i in 0 until doneD.length()) add(doneD.getString(i)) }
 
-        // nombre de colis : somme des étiquettes différentes (BRV)
-        val brvs = LinkedHashMap<String, Int>()
         val imgs = r.getJSONArray("img")
         val newOcr = JSONObject()
+        val reads = ArrayList<Label?>()
         for (i in 0 until imgs.length()) {
             val path = imgs.getString(i)
             val cached = ocr.optJSONObject(path)
-            val lab = if (cached != null) Label(cached.optInt("c", 0).takeIf { it > 0 }, cached.optString("b"), "")
-            else (readLabel(ctx, File(path)) ?: Label(null, "", "")).also { newOcr.put(path, JSONObject().put("c", it.colis ?: 0).put("b", it.brv)) }
-            if (lab.colis != null) { val k = lab.brv.ifEmpty { "n" + lab.colis }; brvs[k] = maxOf(brvs[k] ?: 0, lab.colis) }
+            val lab = if (cached != null) Label(cached.optInt("c", 0).takeIf { it > 0 }, cached.optString("b"), "", cached.optBoolean("l"),
+                cached.optJSONArray("t")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList())
+            else (readLabel(ctx, File(path)) ?: Label(null, "", "")).also {
+                newOcr.put(path, JSONObject().put("c", it.colis ?: 0).put("b", it.brv).put("l", it.label).put("t", JSONArray(it.tracks)))
+            }
+            reads.add(lab)
         }
         if (newOcr.length() > 0) edit(ctx) { o -> val c = o.obj("ocr"); newOcr.keys().forEach { c.put(it, newOcr.get(it)) }; while (c.length() > 400) c.remove(c.keys().next()) }
-        val colis: Int? = if (brvs.isEmpty()) null else brvs.values.sum()
+        val cnt = countColis(reads, imgs.length())
+        val colis = cnt.colis
+        val source = cnt.source
+        val brvs = cnt.brvs
 
         val newImgs = (0 until imgs.length()).map { imgs.getString(it) }.filter { it !in doneSet && File(it).exists() }
         val dl = r.getJSONArray("doc")
@@ -376,7 +414,7 @@ object WaBot {
 
         log(ctx, "→ $group ($day) : " + newImgs.size + " photo(s), " + newDocs.size + " PDF, " + (colis?.let { "$it colis lus" } ?: "colis non lus"))
         val brvTxt = brvs.keys.filter { it.startsWith("BRV") }
-        val note = group + (if (brvTxt.isNotEmpty()) " · " + brvTxt.joinToString(", ") else "")
+        val note = group + (if (source.isNotEmpty()) " · $source" else "") + (if (brvTxt.isNotEmpty()) " · " + brvTxt.joinToString(", ") else "")
         // envoi par paquets de 8 photos (limite du serveur : 10)
         val chunks = if (newImgs.isEmpty()) listOf(emptyList()) else newImgs.chunked(8)
         var lastRow = 0
@@ -384,7 +422,8 @@ object WaBot {
             val photos = JSONArray()
             val tmp = ArrayList<String>()
             for (path in chunk) {
-                PhotoStore.importFile(ctx, File(path))?.let { id -> tmp.add(id); PhotoStore.base64(ctx, id)?.let { photos.put(JSONObject().put("b64", it)) } }
+                // identifiant = nom du fichier WhatsApp : le Sheet ignore une photo déjà enregistrée
+                PhotoStore.importFile(ctx, File(path))?.let { id -> tmp.add(id); PhotoStore.base64(ctx, id)?.let { photos.put(JSONObject().put("b64", it).put("id", "f:" + File(path).name)) } }
             }
             val files = JSONArray()
             if (idx == 0) for (path in newDocs) {
@@ -397,6 +436,7 @@ object WaBot {
                 .put("photos", photos).put("files", files)
             val resp = try { Api.post(Session.serverUrl(ctx), req.toString()) } finally { tmp.forEach { PhotoStore.delete(ctx, it) } }
             if (!resp.optBoolean("ok")) throw Exception(resp.optString("error", "Erreur serveur"))
+            resp.optJSONObject("data")?.optJSONArray("docsRefused")?.let { a -> if (a.length() > 0) log(ctx, "Bon déjà enregistré, ignoré : " + (0 until a.length()).joinToString(", ") { a.getString(it) }) }
             lastRow = resp.optJSONObject("data")?.optInt("row") ?: 0
             // mémoriser ce qui est parti
             edit(ctx) { o ->
