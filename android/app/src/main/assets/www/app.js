@@ -388,49 +388,65 @@
 
   ROUTES.scan = function () {
     if (!state.lotPhotos) state.lotPhotos = store('lotPhotos') || [];
-    setHeader('Scanner retours', 'Gestion Roteur · placement automatique');
-    var today = todayIso();
-    var todays = state.scans.filter(function (s) { return localDay(s.at) === today; });
-    var okN = todays.filter(function (s) { return s.status === 'ok'; }).length;
-    var dupN = todays.filter(function (s) { return s.status === 'dup'; }).length;
+    if (!state.lotStart) state.lotStart = store('lotStart') || new Date().toISOString();
+    if (store('lotStage') === 'photos') { photoStage(); return; }
+    var n = sessionItems().length;
+    setHeader('Scanner retours', 'Les colis vont directement dans Gestion Roteur');
     view(
+      '<div class="steps"><span class="on">1 Scanner</span><i></i><span>2 Terminer ✓</span><i></i><span>3 Photos → groupe</span></div>' +
       '<button class="scan-btn" id="scanBtn">' + ic('scan') + '<span>SCANNER</span></button>' +
-      '<div class="card session" style="margin-top:14px">' +
-      '<div class="sec"><b>Lot en cours</b><small><b class="big" id="sessN">' + sessionItems().length + '</b> colis</small></div>' +
-      '<div class="photo-btns"><button type="button" class="pbtn" id="lotCam">' + ic('cam') + 'Photo des colis</button><button type="button" class="pbtn" id="lotGal">' + ic('img') + 'Choisir une photo</button></div>' +
-      '<div class="photos" id="lotPhotos"></div>' +
-      '<button class="btn btn-green" id="lotSend" style="margin-top:12px">' + ic('wa') + 'Envoyer le lot sur WhatsApp</button>' +
-      '<div id="lotOut"></div></div>' +
-      '<div class="card" style="margin-top:14px"><label class="kv"><span><b>Scan en continu</b><br><span class="small muted">Le scanner se rouvre après chaque colis</span></span>' +
-      '<span class="switch"><input type="checkbox" id="rafale"' + (state.rafale ? ' checked' : '') + '><span></span></span></label></div>' +
-      '<div class="card"><div class="field"><label>Saisie manuelle / lecteur</label>' +
-      '<div class="inrow"><input class="input mono" id="manual" placeholder="N123456789" autocapitalize="characters" spellcheck="false" autocomplete="off"><button class="btn btn-primary btn-sm" id="manualB">OK</button></div></div></div>' +
-      '<div class="stats">' +
-      '<div class="stat"><div class="lbl">Scannés aujourd\'hui</div><div class="val" id="okN" style="color:var(--green)">' + okN + '</div></div>' +
-      '<div class="stat"><div class="lbl">Doublons</div><div class="val" id="dupN" style="color:var(--red)">' + dupN + '</div></div>' +
-      '</div>' +
-      '<div class="card"><div class="sec"><b>Derniers scans</b><small><button class="btn btn-ghost btn-sm" id="retryB">' + ic('sync') + 'Envoyer</button></small></div><div class="list" id="scanList">' + scanListHtml() + '</div></div>'
+      '<div class="card" style="margin-top:14px">' +
+      '<div class="sec"><b>Colis scannés</b><small><b class="big" id="sessN">' + n + '</b></small></div>' +
+      '<div class="inrow" style="margin-bottom:6px"><input class="input mono" id="manual" placeholder="Saisie manuelle : N123456789" autocapitalize="characters" spellcheck="false" autocomplete="off"><button class="btn btn-primary btn-sm" id="manualB">OK</button></div>' +
+      '<div class="list" id="scanList">' + scanListHtml() + '</div></div>' +
+      '<button class="btn btn-finish" id="finishB"' + (n ? '' : ' disabled') + '>' + ic('check') + '<span id="finishT">TERMINER LE SCAN' + (n ? ' (' + n + ')' : '') + '</span></button>' +
+      '<p class="small muted center" style="margin-top:8px">Après « Terminer », la caméra s\'ouvre pour photographier les colis.</p>'
     );
     $('#scanBtn').onclick = function () { scanLoop(); };
-    var saveLotPhotos = function () { store('lotPhotos', state.lotPhotos); };
-    var redraw = function () { renderPhotoGrid(state.lotPhotos, '#lotPhotos', '#lotPhotosCount', saveLotPhotos); };
-    redraw();
-    $('#lotCam').onclick = function () { addPhotosTo(state.lotPhotos, 'takePhoto', function () { saveLotPhotos(); redraw(); }); };
-    $('#lotGal').onclick = function () { addPhotosTo(state.lotPhotos, 'pickPhotos', function () { saveLotPhotos(); redraw(); }); };
-    $('#lotSend').onclick = function () { sendLot(); };
-    $('#rafale').onchange = function () { state.rafale = this.checked; store('rafale', state.rafale); };
+    $('#finishB').onclick = function () {
+      if (!sessionItems().length) return;
+      store('lotStage', 'photos');
+      photoStage();
+      setTimeout(function () { lotPhoto('takePhoto'); }, 300);      // la caméra s'ouvre directement
+    };
     var m = $('#manual');
-    var addManual = function () { var v = m.value; m.value = ''; if (normTracking(v)) addTracking(v); m.focus(); };
+    var addManual = function () { var v = m.value; m.value = ''; if (normTracking(v)) addTracking(v); };
     $('#manualB').onclick = addManual;
     m.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); addManual(); } };
-    $('#retryB').onclick = function () { retryScans(true); };
     bindScanList();
     retryScans();
   };
 
+  /** Étape 3 : photos du lot puis envoi au groupe. */
+  function photoStage() {
+    var n = sessionItems().length;
+    setHeader('Photos des colis', n + ' colis enregistrés dans Gestion Roteur');
+    view(
+      '<div class="steps"><span>1 Scanner</span><i></i><span>2 Terminer ✓</span><i></i><span class="on">3 Photos → groupe</span></div>' +
+      '<div class="card"><div class="sec"><b>Photos des colis</b><small id="lotPhotosCount"></small></div>' +
+      '<div class="photos" id="lotPhotos"></div>' +
+      '<div class="photo-btns" style="margin-top:12px"><button type="button" class="pbtn" id="lotCam">' + ic('cam') + 'Prendre une photo</button><button type="button" class="pbtn" id="lotGal">' + ic('img') + 'Galerie</button></div></div>' +
+      '<button class="btn btn-green" id="lotSend">' + ic('wa') + 'Envoyer au groupe WhatsApp</button>' +
+      '<div id="lotOut"></div>' +
+      '<button class="btn btn-outline" id="backScan">' + ic('scan') + 'Revenir au scan</button>'
+    );
+    redrawLotPhotos();
+    $('#lotCam').onclick = function () { lotPhoto('takePhoto'); };
+    $('#lotGal').onclick = function () { lotPhoto('pickPhotos'); };
+    $('#lotSend').onclick = function () { sendLot(); };
+    $('#backScan').onclick = function () { store('lotStage', 'scan'); render(); };
+  }
+  function redrawLotPhotos() {
+    renderPhotoGrid(state.lotPhotos, '#lotPhotos', '#lotPhotosCount', function () { store('lotPhotos', state.lotPhotos); });
+  }
+  function lotPhoto(method) {
+    addPhotosTo(state.lotPhotos, method, function () { store('lotPhotos', state.lotPhotos); redrawLotPhotos(); });
+  }
+
   function scanListHtml() {
-    var items = state.scans.slice(0, 60);
-    if (!items.length) return '<div class="empty">Aucun scan pour le moment</div>';
+    var since = state.lotStart || '';
+    var items = state.scans.filter(function (x) { return x.at >= since; }).slice(0, 80);
+    if (!items.length) return '<div class="empty">Appuyez sur SCANNER pour commencer</div>';
     return items.map(function (s) {
       var badge, line;
       if (s.status === 'ok') { badge = '<span class="badge b-ok">✓ ' + esc(s.cell) + '</span>'; line = 'Ajouté dans Gestion Roteur'; }
@@ -447,12 +463,10 @@
     var el = $('#scanList');
     if (el && state.route === 'scan') {
       el.innerHTML = scanListHtml(); bindScanList();
-      var today = todayIso();
-      var todays = state.scans.filter(function (s) { return localDay(s.at) === today; });
-      $('#okN').textContent = todays.filter(function (s) { return s.status === 'ok'; }).length;
-      $('#dupN').textContent = todays.filter(function (s) { return s.status === 'dup'; }).length;
       var n = sessionItems().length;
       $('#sessN').textContent = n;
+      $('#finishB').disabled = !n;
+      $('#finishT').textContent = 'TERMINER LE SCAN' + (n ? ' (' + n + ')' : '');
     }
     refreshSyncPill();
   }
@@ -579,15 +593,17 @@
     setTimeout(function () {
       var r = NATIVE.shareWhatsApp(text, JSON.stringify(photos.map(function (p) { return p.id; })),
         'RETOURS SCANNÉS · ' + n + ' colis', 'Gestion Roteur · ' + fmtDate(date));
-      b.disabled = false; b.innerHTML = ic('wa') + 'Envoyer le lot sur WhatsApp';
+      b.disabled = false; b.innerHTML = ic('wa') + 'Envoyer au groupe WhatsApp';
       $('#lotOut').innerHTML = '<div class="note info" style="margin-top:12px">' + (r === 'error'
         ? 'Impossible d\'ouvrir WhatsApp. Le message a été copié.'
-        : 'Dans la liste « Envoyer à », choisissez le groupe puis appuyez sur <b>Envoyer</b> ➤.') + '</div>' +
-        '<button class="btn btn-primary" id="lotNew">' + ic('check') + 'Lot envoyé – commencer un nouveau lot</button>';
+        : 'Dans WhatsApp, choisissez le groupe puis appuyez sur <b>Envoyer</b> ➤.') + '</div>' +
+        '<button class="btn btn-primary" id="lotNew">' + ic('check') + 'C\'est envoyé – nouveau scan</button>';
       $('#lotNew').onclick = function () {
         state.session = []; store('session', []);
         state.lotPhotos = []; store('lotPhotos', []);
-        render(); toast('Nouveau lot ✓', 'ok');
+        state.lotStart = new Date().toISOString(); store('lotStart', state.lotStart);
+        store('lotStage', 'scan');
+        render(); toast('Nouveau scan ✓', 'ok');
       };
     }, 50);
   }
@@ -702,6 +718,8 @@
     var theme = store('theme') || 'auto';
     var q = opQueue();
     view(
+      '<div class="card"><label class="kv"><span><b>Scan en continu</b><br><span class="small muted">Le scanner se rouvre après chaque colis</span></span>' +
+      '<span class="switch"><input type="checkbox" id="rafale"' + (state.rafale ? ' checked' : '') + '><span></span></span></label></div>' +
       '<div class="card"><div class="sec"><b>Apparence</b></div><div class="chips" id="themes">' +
       [['auto', '⚙ Auto'], ['light', '☀ Clair'], ['dark', '☾ Sombre']].map(function (t) {
         return '<button class="chip' + (t[0] === theme ? ' on' : '') + '" data-t="' + t[0] + '">' + t[1] + '</button>';
@@ -717,6 +735,7 @@
           '</div><button class="btn btn-danger btn-sm" data-del="' + esc(o.opId) + '">✕</button></div>';
       }).join('') + '</div><button class="btn btn-ghost" id="syncNow">⟳ Envoyer maintenant</button></div>' : '')
     );
+    $('#rafale').onchange = function () { state.rafale = this.checked; store('rafale', state.rafale); };
     $$('#themes .chip').forEach(function (b) {
       b.onclick = function () { store('theme', b.getAttribute('data-t')); applyTheme(); render(); };
     });
