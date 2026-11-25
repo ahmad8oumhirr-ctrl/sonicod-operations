@@ -192,3 +192,8 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:38px;backgrou
 .pend-item .right{text-align:right}
 .btn-recv{background:var(--green);color:#fff}
 .share-box{background:var(--soft);border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:12px;white-space:pre-wrap;max-height:120px;overflow:auto}
+
+.docs{margin-top:10px}
+.doc{display:flex;align-items:center;background:var(--soft);border-radius:10px;padding:9px 10px;margin-top:6px;font-size:13.5px;font-weight:600}
+.doc span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:6px}
+.doc .x2{border:0;background:none;color:var(--muted);font-weight:900;font-size:15px;padding:0 4px}

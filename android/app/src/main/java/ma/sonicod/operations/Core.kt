@@ -241,6 +241,34 @@ object PhotoStore {
     }
 }
 
+/** Documents partagés (bons PDF…) gardés dans l'application (files/docs). */
+object DocStore {
+    private val ID_RE = Regex("^[a-f0-9-]{36}$")
+    private const val MAX_BYTES = 15L * 1024 * 1024
+
+    fun dir(ctx: Context): File = File(ctx.filesDir, "docs").apply { mkdirs() }
+
+    fun importUri(ctx: Context, uri: Uri): String? {
+        val id = UUID.randomUUID().toString()
+        val f = File(dir(ctx), id)
+        val input = ctx.contentResolver.openInputStream(uri) ?: return null
+        input.use { inp -> f.outputStream().use { out -> inp.copyTo(out) } }
+        if (f.length() == 0L || f.length() > MAX_BYTES) { f.delete(); return null }
+        return id
+    }
+
+    fun base64(ctx: Context, id: String): String? {
+        if (!ID_RE.matches(id)) return null
+        val f = File(dir(ctx), id)
+        return if (f.exists()) Base64.encodeToString(f.readBytes(), Base64.NO_WRAP) else null
+    }
+
+    fun cleanup(ctx: Context) {
+        val limit = System.currentTimeMillis() - 7L * 24 * 3600 * 1000
+        dir(ctx).listFiles()?.forEach { if (it.lastModified() < limit) it.delete() }
+    }
+}
+
 /** File d'attente hors ligne : chaque opération non envoyée est gardée dans files/queue. */
 object OpQueue {
     private val lock = Any()

@@ -666,7 +666,7 @@
   }
 
   /* ================= RETOURS EN ATTENTE (annoncés dans les groupes WhatsApp) ================= */
-  function newPend() { return { pid: uuid(), livreur: '', colis: '', date: todayIso(), note: '', photos: [], shared: '' }; }
+  function newPend() { return { pid: uuid(), livreur: '', colis: '', date: todayIso(), note: '', photos: [], files: [], shared: '' }; }
   function savePend() { store('pend', state.pend); }
 
   ROUTES.attente = function () {
@@ -687,6 +687,7 @@
       '<div class="field"><label>Note <span class="opt">(facultatif)</span></label><textarea class="input" id="pNote" placeholder="Ex : BRV-2611…  /  2 sacs">' + esc(o.note) + '</textarea></div>' +
       '<div class="photo-btns"><button type="button" class="pbtn" id="pCam">' + ic('cam') + 'Photo</button><button type="button" class="pbtn" id="pGal">' + ic('img') + 'Galerie</button></div>' +
       '<div class="photos" id="pPhotos"></div>' +
+      ((o.files || []).length ? '<div class="docs">' + o.files.map(function (f, i) { return '<div class="doc">📄 <span>' + esc(f.name) + '</span><button type="button" class="x2" data-doc="' + i + '">✕</button></div>'; }).join('') + '</div>' : '') +
       '<button class="btn btn-primary" id="pSave" style="margin-top:14px">' + ic('clock') + 'Enregistrer « En attente »</button></div>' +
       '<div class="card"><div class="sec"><b>Retours en attente</b><small><button class="btn btn-ghost btn-sm" id="pReload">' + ic('sync') + 'Actualiser</button></small></div>' +
       '<div class="list" id="pList">' + pendListHtml() + '</div></div>'
@@ -712,6 +713,7 @@
     $('#pCam').onclick = function () { addPhotosTo(o.photos, 'takePhoto', function () { savePend(); redraw(); }); };
     $('#pGal').onclick = function () { addPhotosTo(o.photos, 'pickPhotos', function () { savePend(); redraw(); }); };
     $('#pReload').onclick = function () { loadPending(true); };
+    $$('[data-doc]').forEach(function (b) { b.onclick = function () { o.files.splice(Number(b.getAttribute('data-doc')), 1); savePend(); render(); }; });
     $('#pSave').onclick = function () { sync(); savePending(); };
     bindPendList();
     loadPending(false);
@@ -723,7 +725,7 @@
     return l.map(function (p, i) {
       return '<div class="item pend-item"><div class="av">' + esc(initials(p.livreur)) + '</div><div class="main">' +
         '<div class="t1">' + esc(p.livreur) + ' <span class="badge b-wait">' + p.colis + ' colis</span></div>' +
-        '<div class="t2">' + esc(fmtDate(p.date)) + (p.photos ? ' · 📷 ' + p.photos : '') + (p.note ? ' · ' + esc(p.note) : '') + '</div></div>' +
+        '<div class="t2">' + esc(fmtDate(p.date)) + (p.photos ? ' · 📷 ' + p.photos : '') + (p.docs ? ' · 📄 ' + p.docs : '') + (p.note ? ' · ' + esc(p.note) : '') + '</div></div>' +
         '<button class="btn btn-recv btn-sm" data-recv="' + i + '">' + ic('check') + 'Reçu</button></div>';
     }).join('');
   }
@@ -768,12 +770,13 @@
     var body = { action: 'addPending', pid: o.pid, livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim() };
     var ids = o.photos.map(function (p) { return p.id; });
     var b = $('#pSave'); b.disabled = true; b.innerHTML = '<i class="spin"></i> Enregistrement…';
-    var p = NATIVE ? nat('apiWithPhotos', JSON.stringify(body), JSON.stringify(ids)) : api('addPending', body);
+    var docs = (o.files || []).map(function (f) { return { id: f.id, name: f.name, mime: f.mime }; });
+    var p = NATIVE ? nat('apiWithPhotos', JSON.stringify(body), JSON.stringify(ids), JSON.stringify(docs)) : api('addPending', body);
     p.then(function (r) {
       b.disabled = false; b.innerHTML = ic('clock') + 'Enregistrer « En attente »';
       if (!r.ok) { toast(r.error || 'Erreur', 'err'); return; }
-      toast('✓ ' + o.livreur + ' · ' + o.colis + ' colis en attente', 'ok');
-      state.pendList.unshift({ row: r.data.row, pid: o.pid, livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim(), photos: ids.length });
+      toast('✓ ' + o.livreur + ' · ' + o.colis + ' colis en attente' + (docs.length ? ' + bon PDF' : ''), 'ok');
+      state.pendList.unshift({ row: r.data.row, pid: o.pid, livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim(), photos: ids.length, docs: docs.length });
       store('pendList', state.pendList);
       state.pend = newPend(); savePend();
       render();
@@ -790,9 +793,10 @@
     var o = newPend();
     o.photos = (sh.photos || []).slice(0, 10);
     var text = String(sh.text || '').trim();
-    var files = (sh.files || []).join(', ');
-    o.shared = [text, files].filter(Boolean).join('\n');
-    o.note = files || text.slice(0, 200);
+    o.files = (sh.files || []).filter(function (f) { return f && f.id; });
+    var names = o.files.map(function (f) { return f.name; }).join(', ');
+    o.shared = [text, names].filter(Boolean).join('\n');
+    o.note = text.slice(0, 200) || names.replace(/\.pdf$/i, '');
     var m = /(\d{1,4})\s*(colis|coli|cols|kolis)/i.exec(text);
     if (m) o.colis = m[1];
     var low = text.toLowerCase();

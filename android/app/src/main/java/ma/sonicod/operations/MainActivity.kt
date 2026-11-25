@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
         }
 
         handleShare(intent)
-        io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)) }
+        io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)); DocStore.cleanup(this) }
         if (OpQueue.list(this).isNotEmpty()) SyncWorker.schedule(this)
     }
 
@@ -168,7 +168,10 @@ class MainActivity : ComponentActivity() {
                             photos.put(JSONObject().put("id", id).put("thumb", PhotoStore.thumbDataUrl(this, id)))
                         }
                     } else {
-                        files.put(displayName(uri) ?: "fichier")
+                        val name = displayName(uri) ?: "bon.pdf"
+                        DocStore.importUri(this, uri)?.let { id ->
+                            files.put(JSONObject().put("id", id).put("name", name).put("mime", type.ifEmpty { "application/pdf" }))
+                        }
                     }
                 } catch (e: Exception) {
                 }
@@ -360,7 +363,7 @@ class MainActivity : ComponentActivity() {
 
         /** Envoie une action au serveur en y joignant des photos (base64). */
         @JavascriptInterface
-        fun apiWithPhotos(cb: String, body: String, photoIdsJson: String) {
+        fun apiWithPhotos(cb: String, body: String, photoIdsJson: String, docsJson: String) {
             io.execute {
                 val ctx = this@MainActivity
                 val res = try {
@@ -371,6 +374,15 @@ class MainActivity : ComponentActivity() {
                         PhotoStore.base64(ctx, ids.getString(i))?.let { photos.put(JSONObject().put("b64", it)) }
                     }
                     req.put("photos", photos)
+                    val docs = JSONArray(docsJson.ifEmpty { "[]" })
+                    val files = JSONArray()
+                    for (i in 0 until docs.length()) {
+                        val d = docs.getJSONObject(i)
+                        DocStore.base64(ctx, d.optString("id"))?.let {
+                            files.put(JSONObject().put("b64", it).put("name", d.optString("name")).put("mime", d.optString("mime", "application/pdf")))
+                        }
+                    }
+                    req.put("files", files)
                     Api.post(Session.serverUrl(ctx), req.toString())
                 } catch (e: IOException) {
                     JSONObject().put("ok", false).put("network", true).put("error", "Pas de connexion internet.")
