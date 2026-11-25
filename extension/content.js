@@ -239,7 +239,11 @@
       '<div id="snc-res"></div>' +
       '<button class="btn g" id="snc-save" style="display:none">Renvoyer au Sheet</button>' +
       '<div class="log" id="snc-log">' + esc(logLines.slice(-12).join('\n')) + '</div>' +
-      '<details><summary>Mes groupes retour</summary>' +
+      '<div class="autobox"><b>Ajouter un groupe retour</b>' +
+      '<label>Nom du groupe (exactement comme dans WhatsApp)</label><input id="snc-gname" placeholder="Ex : Roteur Rushliv Casa">' +
+      '<label>Ville / Livreur</label><select id="snc-gcity">' + cityOpts('') + '</select>' +
+      '<button class="btn" id="snc-gadd" style="margin-top:8px">＋ Ajouter</button></div>' +
+      '<details open><summary>Mes groupes retour (' + Object.keys(groups).length + ')</summary>' +
       (Object.keys(groups).length ? Object.keys(groups).map(g => '<div class="grp">' + esc(g) + ' → ' + esc(groups[g] || '?') + ' <a href="#" data-del="' + esc(g) + '" style="float:right;color:#DC2626">retirer</a></div>').join('') : '<p>Aucun. Ouvrez un groupe et choisissez sa ville ci-dessus.</p>') +
       '<label>Adresse du script (…/exec)</label><input id="snc-url" placeholder="(par défaut)" value="' + esc(url) + '">' +
       '</details></div>';
@@ -252,6 +256,13 @@
       renderPanel();
     };
     $$('[data-del]').forEach(a => a.onclick = async e => { e.preventDefault(); const g = (await store.get('groups')) || {}; delete g[a.getAttribute('data-del')]; await store.set('groups', g); renderPanel(); });
+    $('#snc-gadd').onclick = async () => {
+      const n = $('#snc-gname').value.trim(), c = $('#snc-gcity').value;
+      if (!n) { log('Écrivez le nom du groupe.'); return; }
+      if (!c) { log('Choisissez la ville du groupe.'); return; }
+      const g = (await store.get('groups')) || {}; g[n] = c; await store.set('groups', g);
+      log('Groupe ajouté : ' + n + ' → ' + c); renderPanel();
+    };
     $('#snc-url').onchange = async () => { await store.set('serverUrl', $('#snc-url').value.trim()); log('Adresse enregistrée.'); };
     $('#snc-one').onclick = async () => {
       const day = $('#snc-day').value || today;
