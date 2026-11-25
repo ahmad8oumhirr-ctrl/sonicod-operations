@@ -27,7 +27,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font-family:Roboto,"Segoe UI",system-ui,sans-serif;font-size:16px;-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
-svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg{width:22px;height:22px;fill:currentColor;stroke:none;flex:none}
 .hidden{display:none!important}
 .muted{color:var(--muted)} .center{text-align:center} .small{font-size:13px}
 .mono{font-family:ui-monospace,"Roboto Mono",monospace;letter-spacing:.3px}
@@ -38,7 +38,9 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke
 .top-row{display:flex;align-items:center;justify-content:space-between}
 .brand{display:flex;align-items:center}
 .brand img{width:30px;height:30px;display:block;margin-right:10px}
-.brand-name{font-weight:800;font-size:16px;letter-spacing:3px}
+.brand div{display:flex;flex-direction:column;line-height:1.1}
+.brand-small{font-size:10px;font-weight:700;letter-spacing:2.5px;color:var(--bolt)}
+.brand-name{font-weight:800;font-size:16px;letter-spacing:.3px}
 .top-title{font-size:21px;font-weight:700;margin-top:14px;letter-spacing:.1px}
 .top-sub{color:rgba(255,255,255,.72);font-size:13px;margin-top:3px}
 .sync-pill{border:0;border-radius:20px;background:var(--bolt);color:#2E1240;font-weight:700;font-size:12px;padding:6px 11px}
@@ -143,7 +145,7 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:36px;
 .scan-btn{width:100%;border:0;border-radius:var(--r);padding:24px 10px;color:#fff;background:var(--brand-d);display:flex;flex-direction:column;align-items:center;
   font-size:17px;font-weight:700;letter-spacing:3px;box-shadow:var(--shadow)}
 [data-theme=dark] .scan-btn{background:var(--brand-50);color:var(--ink);border:1px solid var(--line)}
-.scan-btn svg{width:42px;height:42px;stroke-width:1.6;margin-bottom:8px;color:var(--bolt)}
+.scan-btn svg{width:40px;height:40px;margin-bottom:8px;color:var(--bolt)}
 .scan-btn.flash-ok{animation:fok .6s}
 .scan-btn.flash-dup{animation:fdup .9s}
 @keyframes fok{0%{box-shadow:0 0 0 0 rgba(30,142,78,.8)}100%{box-shadow:0 0 0 18px rgba(30,142,78,0)}}
@@ -152,7 +154,7 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:36px;
 
 /* ---------------- succès / messages ---------------- */
 .success-ic{width:64px;height:64px;border-radius:50%;margin:4px auto 12px;display:grid;place-items:center;color:#fff;background:var(--ok)}
-.success-ic svg{width:32px;height:32px;stroke-width:2.6}
+.success-ic svg{width:34px;height:34px}
 .success-ic.wait{background:var(--warn)}
 .success-ic.run{background:var(--brand)}
 .success-ic.run .spin{width:28px;height:28px;border-width:3px}
@@ -185,9 +187,10 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:36px;
   padding:4px 4px calc(6px + env(safe-area-inset-bottom))}
 .nav button{border:0;background:none;display:flex;flex-direction:column;align-items:center;padding:8px 2px 4px;color:var(--muted);font-size:10.5px;font-weight:600;position:relative;min-width:0}
 .nav button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.nav button svg{width:23px;height:23px;margin-bottom:3px}
+.nav button svg{width:22px;height:22px;margin-bottom:2px}
+.nav button svg{padding:4px 14px;box-sizing:content-box;border-radius:14px;transition:background .2s}
 .nav button.on{color:var(--brand)}
-.nav button.on:before{content:"";position:absolute;top:-4px;left:28%;right:28%;height:3px;border-radius:0 0 3px 3px;background:var(--brand)}
+.nav button.on svg{background:var(--brand-50)}
 
 /* ---------------- feuille modale + toast ---------------- */
 .sheet-wrap{position:fixed;top:0;right:0;bottom:0;left:0;z-index:50}
