@@ -36,9 +36,9 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   log('notif 1:', sh(`adb shell "cmd notification post -S messaging --conversation 'Retour CASA Sonicod' --message 'Ahmed:📷 Photo' --message 'Ahmed:📄 BRV-2026112500123.pdf' casa1 'x'"`));
   log('notif 2:', sh(`adb shell "cmd notification post -S messaging --conversation 'Famille' --message 'Ali:📷 Photo' fam1 'x'"`));
   await wait(3000);
-  sh(`adb push tests/label.jpg "${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg"`);
-  sh(`adb push tests/bon.pdf "${D}/WhatsApp Business Documents/BRV-2026112500123.pdf"`);
-  log('fichiers:', sh(`adb shell "ls -l '${D}/WhatsApp Business Images' '${D}/WhatsApp Business Documents'"`));
+  sh(`adb push label.jpg "${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg"`);
+  sh(`adb push bon.pdf "${D}/WhatsApp Business Documents/BRV-2026112500123.pdf"`);
+  log('push:', sh(`adb shell "ls '${D}/WhatsApp Business Images'"`)); log('fichiers:', sh(`adb shell "ls -l '${D}/WhatsApp Business Images' '${D}/WhatsApp Business Documents'"`));
   st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('groupes vus (non suivis):', (st.seen || []).map(x => x.name), '| en attente de fichier:', st.waiting);
   await wait(15000);
