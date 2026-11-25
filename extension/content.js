@@ -420,6 +420,9 @@
     const group = chatName();
     const today = isoOf(new Date());
     const sched = (await store.get('sched')) || { on: false, times: ['00:00'] };
+    const auto = (await store.get('auto')) || { on: true, every: 60 };
+    const aLast = (await store.get('autoLast')) || 0;
+    const nextAuto = new Date(Math.max(Date.now(), aLast + auto.every * 60000)).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     const lastRun = (await store.get('lastRun')) || '—';
     const cityOpts = sel => '<option value="">— Ville / Livreur —</option>' + cities.map(c => '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
     panel.innerHTML =
@@ -429,7 +432,13 @@
       (group ? '<label>Ce groupe correspond à</label><select id="snc-city">' + cityOpts(groups[group] || '') + '</select>' : '') +
       '<div class="row"><button class="btn" id="snc-one"' + (group ? '' : ' disabled') + '>Lire ce groupe</button>' +
       '<button class="btn o" id="snc-all"' + (Object.keys(groups).length ? '' : ' disabled') + '>Lire tous mes groupes (' + Object.keys(groups).length + ')</button></div>' +
-      '<div class="autobox"><label style="margin:0;display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:#1D1428"><input type="checkbox" id="snc-auto" style="width:auto"' + (sched.on ? ' checked' : '') + '> <b>Chaque jour automatiquement</b> à :</label>' +
+      '<div class="autobox" style="border:2px solid #CF118B"><b>🤖 Lecture automatique de tous mes groupes</b>' +
+      '<select id="snc-every" style="margin-top:6px">' + [[0, 'Désactivée'], [30, 'Toutes les 30 minutes'], [60, 'Toutes les heures'], [120, 'Toutes les 2 heures'], [240, 'Toutes les 4 heures']].map(x =>
+        '<option value="' + x[0] + '"' + ((auto.on ? auto.every : 0) === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select>' +
+      '<div class="s" style="font-size:12px;color:#6F6680;margin-top:6px">Le bot ouvre lui-même chaque groupe, prend photos + bon PDF + nombre de colis et remplit « Retours en attente ». ' +
+      'Il attend que vous n\'utilisiez pas WhatsApp, puis revient sur votre groupe. Laissez ce WhatsApp Web ouvert sur le PC.' +
+      (auto.on ? '<br>Prochaine lecture vers ' + esc(nextAuto) : '') + '</div></div>' +
+      '<div class="autobox"><label style="margin:0;display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:#1D1428"><input type="checkbox" id="snc-auto" style="width:auto"' + (sched.on ? ' checked' : '') + '> <b>En plus, chaque jour</b> à :</label>' +
       '<div class="times">' + sched.times.map((t, k) => '<span class="tchip">' + esc(t) + ' <a href="#" data-tdel="' + k + '">✕</a></span>').join('') + '</div>' +
       '<div class="row" style="align-items:center;margin-top:6px"><input type="time" id="snc-time" value="00:00" style="max-width:120px"><button class="btn o" id="snc-tadd" style="margin:0;padding:8px">＋ Ajouter l\'heure</button></div>' +
       '<div class="s" style="font-size:12px;color:#6F6680;margin-top:6px">Lit tous mes groupes (hier + aujourd\'hui). Dernière lecture : ' + esc(lastRun) + '</div>' +
@@ -475,6 +484,13 @@
     };
     const saveSched = async (sc) => { await store.set('sched', sc); chrome.runtime.sendMessage({ type: 'schedule', sched: sc }); };
     $('#snc-auto').onchange = async () => { sched.on = $('#snc-auto').checked; await store.set('lastSlot', Date.now()); await saveSched(sched); log(sched.on ? 'Programmation activée : ' + sched.times.join(', ') : 'Programmation arrêtée.'); };
+    $('#snc-every').onchange = async () => {
+      const v = +$('#snc-every').value;
+      await store.set('auto', v ? { on: true, every: v } : { on: false, every: auto.every || 60 });
+      if (v) await store.set('autoLast', 0);
+      log(v ? 'Lecture automatique : toutes les ' + v + ' min (première dans moins d\'une minute si vous ne touchez pas WhatsApp).' : 'Lecture automatique arrêtée.');
+      renderPanel();
+    };
     $('#snc-tadd').onclick = async () => { const t = $('#snc-time').value; if (!/^\d{2}:\d{2}$/.test(t)) return; if (sched.times.indexOf(t) < 0) sched.times.push(t); sched.times.sort(); await saveSched(sched); renderPanel(); };
     $$('[data-tdel]').forEach(a => a.onclick = async e => { e.preventDefault(); sched.times.splice(+a.dataset.tdel, 1); await saveSched(sched); renderPanel(); });
     $('#snc-now').onclick = async () => { busy(true); await scheduledRun(true); busy(false); renderPanel(); };
@@ -513,6 +529,14 @@
     }
   }
 
+  /** Mémoire « déjà envoyé » : mises à jour une par une (plusieurs groupes sont envoyés en même temps). */
+  let sentLock = Promise.resolve();
+  function withSent(fn) {
+    const run = sentLock.then(async () => { const s = (await store.get('sent')) || {}; const r = fn(s); await store.set('sent', s); return r; });
+    sentLock = run.catch(() => {});
+    return run;
+  }
+
   /** Envoie au Sheet seulement ce qui est nouveau (photos / PDF pas encore envoyés). */
   async function sendRecord(r) {
     if (!r.livreur) { r.status = 'err'; r.msg = 'Choisissez la ville de ce groupe (menu ci-dessus) puis relisez.'; renderResults(); return; }
@@ -533,10 +557,14 @@
       note: r.group + (r.source ? ' · ' + r.source : '') + (brv.length ? ' · ' + brv.join(', ') : ''), photos, files
     });
     if (res.ok) {
-      done.p = done.p.concat(ph); done.d = done.d.concat(files.map(f => f.name)); done.c = r.colis; done.l = r.livreur;
-      sent[pid] = done;
-      const keys = Object.keys(sent); if (keys.length > 300) keys.slice(0, 100).forEach(k => delete sent[k]);
-      await store.set('sent', sent);
+      await withSent(all => {
+        const cur = all[pid] || { p: [], d: [], c: null };
+        cur.p = cur.p.concat(ph.filter(x => cur.p.indexOf(x) < 0));
+        cur.d = cur.d.concat(files.map(f => f.name).filter(x => cur.d.indexOf(x) < 0));
+        cur.c = r.colis; cur.l = r.livreur;
+        delete all[pid]; all[pid] = cur;                     // le plus récent à la fin
+        const keys = Object.keys(all); if (keys.length > 300) keys.slice(0, keys.length - 250).forEach(k => delete all[k]);
+      });
       r.status = 'ok';
       if (res.data.docsRefused && res.data.docsRefused.length) log('Bon déjà enregistré, ignoré : ' + res.data.docsRefused.join(', '));
       r.msg = (!res.data.row ? '✓ Déjà dans le Sheet (doublon ignoré)' : (res.data.created ? '✓ Ajouté au Sheet' : '✓ Mis à jour') + ' (ligne ' + res.data.row + ')') + (res.data.skipped ? ' · ' + res.data.skipped + ' doublon(s) ignoré(s)' : '') +
@@ -618,7 +646,39 @@
       log('✓ Lecture programmée terminée.');
     } finally { autoBusy = false; }
   }
-  setInterval(() => { scheduledRun(false); }, 30000);
+  /* ---------- lecture automatique régulière (toutes les X minutes), quand vous n'utilisez pas WhatsApp ---------- */
+  let lastUserAct = 0;
+  ['keydown', 'mousedown', 'wheel', 'touchstart'].forEach(t => document.addEventListener(t, e => {
+    if (e.isTrusted && !(e.target && e.target.closest && e.target.closest('#snc-panel, #snc-fab'))) lastUserAct = Date.now();
+  }, true));
+  async function autoRun(force) {
+    const auto = (await store.get('auto')) || { on: true, every: 60 };
+    if (autoBusy || (!auto.on && !force)) return;
+    if (!$('#pane-side')) return;
+    const groups = (await store.get('groups')) || {};
+    if (!Object.keys(groups).length) return;
+    const last = (await store.get('autoLast')) || 0;
+    if (!force && Date.now() - last < auto.every * 60000) return;
+    if (!force && Date.now() - lastUserAct < 120000) return;       // vous êtes en train d'utiliser WhatsApp : on attend
+    const box = $('#main footer div[contenteditable="true"]');
+    if (!force && box && (box.textContent || '').trim()) return;     // message en cours d'écriture
+    autoBusy = true;
+    await store.set('autoLast', Date.now());
+    const before = chatName();
+    const today = isoOf(new Date()), yesterday = isoOf(new Date(Date.now() - 86400000));
+    const lastDay = await store.get('autoDay');
+    log('▶ Lecture automatique (' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ')');
+    try {
+      await runAll(lastDay === today ? [today] : [yesterday, today]);
+      await store.set('autoDay', today);
+      await store.set('lastRun', new Date().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
+    } finally {
+      autoBusy = false;
+      if (before && normName(chatName()) !== normName(before)) { try { await openChat(before); } catch (e) {} }   // on revient sur votre groupe
+      if ($('#snc-panel') && $('#snc-panel').style.display === 'block') renderPanel();
+    }
+  }
+  setInterval(() => { scheduledRun(false); autoRun(false); }, 30000);
   chrome.runtime.onMessage.addListener(msg => { if (msg && msg.type === 'scheduled') scheduledRun(false); });
 
   /* ---------------- démarrage ---------------- */
