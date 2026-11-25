@@ -91,7 +91,7 @@
       cities: ['Agadir', 'BENI MELAL', 'CASA', 'Chtouka', 'EL JADIDA', 'ERRACHIDIA', 'FES', 'IBEX SUD', 'MARRAEKCH', 'OUARZAZAT', 'OUJDA', 'RABAT', 'SAFI', 'Sud', 'TANGER', 'taroudant'],
       statuses: ['VALIDER', 'Attent Reclamation']
     },
-    draft: null,
+    draft: store('draft'),
     last: null,
     route: 'op',
     history: [],
@@ -102,6 +102,7 @@
     sending: false
   };
 
+  function saveDraft() { try { store('draft', state.draft); } catch (e) {} }
   function newDraft() {
     return { opId: uuid(), livreur: '', colis: '', dateReception: todayIso(), dateEnvoi: '', note: '', statut: '', photos: [] };
   }
@@ -134,6 +135,15 @@
     return true;
   }
   window.sonicodBack = back;
+  /** Photo prise pendant qu'Android relançait l'application : on l'ajoute au formulaire en cours. */
+  window.sonicodOrphans = function () {
+    if (!NATIVE || !NATIVE.takeOrphans) return;
+    var arr = []; try { arr = JSON.parse(NATIVE.takeOrphans()); } catch (e) {}
+    if (!arr.length) return;
+    if (store('lotStage') === 'photos') { state.lotPhotos = (store('lotPhotos') || []).concat(arr).slice(0, 10); store('lotPhotos', state.lotPhotos); }
+    else { if (!state.draft) state.draft = newDraft(); state.draft.photos = state.draft.photos.concat(arr).slice(0, 10); saveDraft(); }
+    render(); toast('Photo récupérée ✓', 'ok');
+  };
   window.sonicodResume = function () { applyTheme(); refreshSyncPill(); retryScans(); };
 
   function setHeader(title, sub) {
@@ -228,6 +238,7 @@
       if (lv !== '__add') d.livreur = lv;
       d.colis = $('#colis').value.trim();
       d.dateReception = $('#dateReception').value; d.dateEnvoi = $('#dateEnvoi').value; d.note = $('#note').value;
+      saveDraft();
     };
     $$('#view input, #view select, #view textarea').forEach(function (el) {
       el.addEventListener('input', function () { sync(); var f = el.closest('.field'); if (f) clearErr(f); });
@@ -247,7 +258,7 @@
     });
     $$('#statuts .seg-btn').forEach(function (b) {
       b.onclick = function () {
-        d.statut = b.getAttribute('data-s');
+        d.statut = b.getAttribute('data-s'); saveDraft();
         $$('#statuts .seg-btn').forEach(function (x) { x.classList.toggle('on', x === b); });
         clearErr($('#f-statut'));
       };
@@ -267,6 +278,7 @@
     $$('.x', box).forEach(function (b) {
       b.onclick = function () {
         var p = d.photos.splice(Number(b.getAttribute('data-i')), 1)[0];
+        saveDraft();
         if (p && NATIVE) NATIVE.deletePhoto(p.id);
         renderPhotos();
       };
@@ -279,6 +291,7 @@
     nat(method).then(function (res) {
       if (!res.ok) { toast(res.error || 'Erreur photo', 'err'); return; }
       (res.photos || []).forEach(function (p) { if (d.photos.length < 10) d.photos.push(p); });
+      saveDraft();
       renderPhotos();
     });
   }
@@ -320,7 +333,7 @@
     // On passe tout de suite à l'écran WhatsApp ; l'enregistrement continue en arrière-plan.
     var L = { op: op, photoIds: ids, pending: true, queued: false, data: null, draft: d };
     state.last = L;
-    state.draft = null;
+    state.draft = null; store('draft', null);
     go('success', {}, { replace: true });
     nat('submit', JSON.stringify(op), JSON.stringify(ids)).then(function (res) {
       L.pending = false;
@@ -922,5 +935,6 @@
   $$('#nav button').forEach(function (b) { b.onclick = function () { go(b.getAttribute('data-go')); }; });
   $('#syncPill').onclick = function () { go('settings'); };
   go('op', {}, { replace: true });
+  setTimeout(function () { window.sonicodOrphans(); }, 800);
   if (info().serverUrl) { loadConfig(); retryScans(); }
 })();

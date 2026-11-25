@@ -51,9 +51,23 @@ class MainActivity : ComponentActivity() {
     /** Contenu partagé depuis WhatsApp (photos, PDF, texte), en attente d'être lu par la page. */
     @Volatile private var pendingShare: String? = null
 
+    /** Photo prise alors que l'application a été relancée par Android (mémoire) : récupérée au rechargement. */
+    @Volatile private var orphanPhotos = JSONArray()
+
     private val takePicture = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val cb = cameraCallback ?: return@registerForActivityResult
         val f = cameraFile
+        val cb = cameraCallback
+        if (cb == null) {
+            if (ok && f != null && f.exists()) io.execute {
+                PhotoStore.importFile(this, f)?.let { id ->
+                    synchronized(this) { orphanPhotos.put(JSONObject().put("id", id).put("thumb", PhotoStore.thumbDataUrl(this, id))) }
+                }
+                f.delete()
+                runOnUiThread { webView.evaluateJavascript("window.sonicodOrphans && window.sonicodOrphans()", null) }
+            }
+            cameraFile = null
+            return@registerForActivityResult
+        }
         cameraCallback = null
         cameraFile = null
         if (!ok || f == null) {
@@ -88,9 +102,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        cameraFile?.let { outState.putString("cameraFile", it.path) }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        savedInstanceState?.getString("cameraFile")?.let { cameraFile = File(it) }
         webView = WebView(this)
         setContentView(webView)
 
@@ -127,11 +147,9 @@ class MainActivity : ComponentActivity() {
             }
         })
 
-        if (savedInstanceState == null) {
-            webView.loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
-        } else {
-            webView.restoreState(savedInstanceState)
-        }
+        // Toujours recharger la page : l'état est gardé dans le téléphone (localStorage),
+        // et une restauration ratée donnerait un écran blanc.
+        webView.loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
 
         handleShare(intent)
         io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)); DocStore.cleanup(this) }
@@ -189,11 +207,6 @@ class MainActivity : ComponentActivity() {
         }
     } catch (e: Exception) {
         null
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        webView.saveState(outState)
     }
 
     override fun onResume() {
@@ -354,6 +367,13 @@ class MainActivity : ComponentActivity() {
         }
 
         /** Renvoie (une seule fois) le contenu partagé depuis WhatsApp, ou "". */
+        @JavascriptInterface
+        fun takeOrphans(): String = synchronized(this@MainActivity) {
+            val v = orphanPhotos.toString()
+            orphanPhotos = JSONArray()
+            v
+        }
+
         @JavascriptInterface
         fun takeShared(): String {
             val v = pendingShare ?: return ""
