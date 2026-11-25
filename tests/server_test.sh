@@ -16,3 +16,6 @@ echo "== submit invalide (date envoi après réception)"
 call "{\"action\":\"submit\",\"key\":\"$KEY\",\"op\":{\"opId\":\"$OP-bad1\",\"livreur\":\"CASA\",\"colis\":2,\"dateReception\":\"$D2\",\"dateEnvoi\":\"$D0\",\"statut\":\"VALIDER\"}}"
 echo "== scan"
 call "{\"action\":\"scan\",\"key\":\"$KEY\",\"tracking\":\"TESTSRV$(date +%s)\",\"scanId\":\"$OP-scan1\"}"
+echo "== lecture étiquette (OCR)"
+LB=$(base64 -w0 label.jpg)
+call "{\"action\":\"ocrLabel\",\"key\":\"$KEY\",\"b64\":\"$LB\"}"

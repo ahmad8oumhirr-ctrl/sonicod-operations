@@ -62,6 +62,7 @@ function doPost(e) {
       case 'addPending':     data = addPending_(req); break;
       case 'listPending':    data = listPending_(); break;
       case 'receivePending': data = receivePending_(req); break;
+      case 'ocrLabel':       data = ocrLabel_(req); break;
       default: throw new AppError('Action inconnue.');
     }
     return json_({ ok: true, data: data });
@@ -481,6 +482,56 @@ function receivePending_(req) {
   });
 }
 
+/* ============================== 4) LECTURE D'ÉTIQUETTE (OCR Google Drive) ============================== */
+
+/** Lit le texte d'une photo d'étiquette « BON RETOUR CLIENT » et en extrait le nombre de colis. */
+function ocrLabel_(req) {
+  var b64 = String(req.b64 || '');
+  if (b64.length < 100) throw new AppError('Image vide.');
+  var bytes = Utilities.base64Decode(b64);
+  var boundary = 'sonicod' + Date.now();
+  var meta = { name: 'sonicod_ocr_' + Date.now(), mimeType: 'application/vnd.google-apps.document' };
+  var head = Utilities.newBlob('--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(meta) +
+    '\r\n--' + boundary + '\r\nContent-Type: ' + (req.mime || 'image/jpeg') + '\r\n\r\n').getBytes();
+  var tail = Utilities.newBlob('\r\n--' + boundary + '--').getBytes();
+  var auth = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
+  var up = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&ocrLanguage=fr', {
+    method: 'post', contentType: 'multipart/related; boundary=' + boundary,
+    payload: head.concat(bytes).concat(tail), headers: auth, muteHttpExceptions: true
+  });
+  if (up.getResponseCode() !== 200) throw new Error('OCR impossible (' + up.getResponseCode() + ') : ' + up.getContentText().slice(0, 200));
+  var id = JSON.parse(up.getContentText()).id;
+  var text = '';
+  try {
+    text = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '/export?mimeType=text/plain', { headers: auth, muteHttpExceptions: true }).getContentText();
+  } finally {
+    try { DriveApp.getFileById(id).setTrashed(true); } catch (e) {}
+  }
+  var r = parseLabel_(text);
+  r.text = text.replace(/\s+/g, ' ').trim().slice(0, 400);
+  return r;
+}
+
+/** Extrait colis / zone / date / BRV du texte de l'étiquette. */
+function parseLabel_(text) {
+  var t = String(text || '').replace(/\r/g, '');
+  var flat = t.replace(/\s+/g, ' ');
+  var r = { colis: null, part: '', zone: '', date: '', brv: '' };
+  var m = /NOMBRE\s*D[EU]\s*COLIS\D{0,25}?(\d{1,4})/i.exec(flat);
+  if (m) r.colis = Number(m[1]);
+  var ci = flat.search(/COLIS/i);
+  var zoneTxt = ci >= 0 ? flat.slice(ci) : flat;
+  var p = /(\d{1,4})\s*[|lI!]?\s*(\d{1,2})\s*\/\s*(\d{1,2})(?!\d|\s*\/)/.exec(zoneTxt);
+  if (p) { if (r.colis == null) r.colis = Number(p[1]); r.part = p[2] + '/' + p[3]; }
+  m = /Zone\s*:?\s*((?:HUB\s+)?[A-Z][A-Za-zÉÈéè'\- ]{2,25}?)(?=\s+(?:Date|Magasin|T[ée]l|Adresse|NOMBRE|\d)|$)/i.exec(flat);
+  if (m) r.zone = m[1].trim().toUpperCase();
+  m = /(\d{2})\s*\/\s*(\d{2})\s*\/\s*(\d{4})/.exec(flat);
+  if (m) r.date = m[3] + '-' + m[2] + '-' + m[1];
+  m = /BRV[-\s]?(\d{8,20})/i.exec(flat);
+  if (m) r.brv = 'BRV-' + m[1];
+  return r;
+}
+
 /* ============================== OUTILS ============================== */
 
 /** À lancer une fois depuis l'éditeur : donne les autorisations et vérifie tout. */
@@ -491,5 +542,7 @@ function setup() {
   Logger.log('Onglet Gestion Roteur OK');
   pendingSheet_();
   Logger.log('Onglet Retours en attente OK');
+  UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/about?fields=user', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } });
+  Logger.log('Lecture d\'étiquettes (OCR) OK');
   Logger.log('Dossier photos : ' + photoFolder_().getUrl());
 }
