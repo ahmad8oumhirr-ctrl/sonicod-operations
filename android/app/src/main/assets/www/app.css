@@ -51,7 +51,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-l
 textarea.input{min-height:80px;resize:vertical}
 input[type=date].input{padding:13px 10px;font-size:15.5px}
 [data-theme=dark] input[type=date]{color-scheme:dark}
-select.input{appearance:none;padding-right:38px;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+select.input{-webkit-appearance:none;appearance:none;padding-right:38px;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
   background-position:calc(100% - 20px) 52%,calc(100% - 14px) 52%;background-size:6px 6px;background-repeat:no-repeat}
 .field.err .input{border-color:var(--red)}
 .field .msg{color:var(--red);font-size:13px;margin:6px 2px 0}
@@ -160,3 +160,22 @@ select.input{appearance:none;padding-right:38px;background-image:linear-gradient
 .session .lbl-s{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
 .session .big{font-size:28px;font-weight:900;color:var(--accent-2)}
 .btn-sm svg{width:16px;height:16px}
+
+/* Compatibilité anciens WebView (pas de "gap" en flexbox) */
+.sec,.btn,.brand,.seg-btn,.item,.kv,.inrow,.item .t1,.sync-pill{gap:0!important}
+.sec > * + *{margin-left:10px}
+.sec small{margin-left:auto!important}
+.btn > svg,.btn > .spin{margin-right:9px}
+.brand img{margin-right:10px}
+.seg-btn i{margin-right:8px}
+.item > * + *{margin-left:12px}
+.kv > * + *{margin-left:12px}
+.inrow > * + *{margin-left:8px}
+.item .t1 > * + *{margin-left:8px}
+.pbtn,.nav button,.scan-btn{gap:0!important}
+.pbtn svg{margin-bottom:6px}
+.nav button svg{margin-bottom:3px}
+.scan-btn svg{margin-bottom:8px}
+.chips{gap:0!important;margin:-4px}
+.chips > *{margin:4px}
+.item .t1 .badge{margin-left:8px}

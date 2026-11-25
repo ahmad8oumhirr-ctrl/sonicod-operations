@@ -1,66 +1,85 @@
-// Test complet de l'application sur émulateur Android (WebView pilotée via DevTools)
-const puppeteer = require('puppeteer-core');
+// Test complet de l'application sur émulateur Android : la WebView est pilotée via le protocole DevTools.
+const WebSocket = require('ws');
+const http = require('http');
 const fs = require('fs');
 const OUT = process.env.OUT || 'results';
 fs.mkdirSync(OUT, { recursive: true });
 const log = (...a) => { const l = a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' '); console.log(l); fs.appendFileSync(OUT + '/app_test.txt', l + '\n'); };
 const wait = ms => new Promise(r => setTimeout(r, ms));
+const getJson = url => new Promise((res, rej) => http.get(url, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { res(JSON.parse(d)); } catch (e) { rej(e); } }); }).on('error', rej));
 
 (async () => {
-  let browser;
-  for (let i = 0; i < 20 && !browser; i++) {
-    try { browser = await puppeteer.connect({ browserURL: 'http://127.0.0.1:9222', defaultViewport: null }); } catch (e) { await wait(2000); }
+  let target;
+  for (let i = 0; i < 30 && !target; i++) {
+    try { const list = await getJson('http://127.0.0.1:9222/json/list'); target = list.find(t => t.type === 'page' && /appassets/.test(t.url)); } catch (e) {}
+    if (!target) await wait(2000);
   }
-  if (!browser) { log('ECHEC: impossible de se connecter à la WebView'); process.exit(1); }
-  const pages = await browser.pages();
-  const page = pages.find(p => p.url().includes('appassets')) || pages[0];
-  log('URL', page.url());
-  page.on('console', m => log('console.' + m.type(), m.text()));
-  page.on('pageerror', e => log('PAGEERROR', e.message));
-  const shot = async n => { await wait(800); const b64 = await page.screenshot({ encoding: 'base64' }); fs.writeFileSync(`${OUT}/${n}.png`, Buffer.from(b64, 'base64')); };
-  const toastText = () => page.$eval('#toast', e => e.textContent).catch(() => '');
-  const click = sel => page.$eval(sel, e => e.click());
+  if (!target) { log('ECHEC: WebView introuvable'); process.exit(1); }
+  log('Cible:', target.url);
+  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise(r => ws.on('open', r));
+  let id = 0; const pending = {};
+  ws.on('message', m => { const d = JSON.parse(m); if (d.id && pending[d.id]) { pending[d.id](d); delete pending[d.id]; } if (d.method === 'Runtime.exceptionThrown') log('EXCEPTION JS', d.params.exceptionDetails.text, d.params.exceptionDetails.exception && d.params.exceptionDetails.exception.description); if (d.method === 'Runtime.consoleAPICalled' && d.params.type === 'error') log('console.error', d.params.args.map(a => a.value || a.description).join(' ')); });
+  const send = (method, params = {}) => new Promise(r => { const i = ++id; pending[i] = r; ws.send(JSON.stringify({ id: i, method, params })); });
+  await send('Runtime.enable');
+  const js = async expr => { const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.result.exceptionDetails) return 'ERREUR: ' + (r.result.exceptionDetails.exception || {}).description; return r.result.result.value; };
+  const shot = async n => { await wait(900); const r = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${OUT}/${n}.png`, Buffer.from(r.result.data, 'base64')); };
+  const click = sel => js(`(function(){var e=document.querySelector(${JSON.stringify(sel)}); if(!e) return 'absent: ${sel}'; e.click(); return 'ok';})()`);
+  const setVal = (sel, v) => js(`(function(){var e=document.querySelector(${JSON.stringify(sel)}); if(!e) return 'absent'; e.value=${JSON.stringify(v)}; e.dispatchEvent(new Event('input')); e.dispatchEvent(new Event('change')); return 'ok';})()`);
+  const toast = () => js(`document.querySelector('#toast').textContent`);
+  const lastScan = () => js(`(JSON.parse(localStorage.scans||'[]')[0]||null)`);
 
-  // 1) Démarrage
-  await wait(4000);
-  log('info', await page.evaluate(() => SonicodNative.getInfo()));
+  await wait(3000);
+  log('INFO natif:', await js('SonicodNative.getInfo()'));
+  log('Écran initial:', await js(`document.querySelector('#topTitle').textContent`));
   await shot('01_operation');
 
-  // 2) Paramètres → test connexion serveur (ping)
+  // Paramètres → ping serveur
   await click('.nav [data-go="settings"]'); await wait(500);
-  await click('#sSave'); await wait(8000);
-  log('PING:', await toastText());
+  await click('#sSave');
+  for (let i = 0; i < 20; i++) { await wait(1000); const t = await toast(); if (/Connecté|injoignable|invalide|Enregistré|autoris|inattendue/i.test(t)) break; }
+  log('PING (Paramètres):', await toast());
   await shot('02_parametres');
-  log('CONFIG villes:', await page.evaluate(() => (JSON.parse(localStorage.config || '{}').cities || []).length));
+  log('Villes chargées:', await js(`(JSON.parse(localStorage.config||'{}').cities||[]).length`));
 
-  // 3) Nouvelle opération (test, sans photo)
+  // Validation : envoyer formulaire vide
   await click('.nav [data-go="op"]'); await wait(500);
-  await page.select('#livreur', 'CASA');
-  await page.$eval('#colis', e => { e.value = '1'; e.dispatchEvent(new Event('input')); });
-  await page.$eval('#dateEnvoi', e => { const d = new Date(); d.setDate(d.getDate() - 2); e.value = d.toISOString().slice(0, 10); e.dispatchEvent(new Event('input')); });
-  await page.$eval('#note', e => { e.value = 'TEST CLAUDE – A SUPPRIMER'; e.dispatchEvent(new Event('input')); });
+  await click('#send'); await wait(500);
+  log('Validation vide → erreurs:', await js(`[].map.call(document.querySelectorAll('.field.err .msg'),function(e){return e.textContent})`));
+
+  // Nouvelle opération test
+  await setVal('#livreur', 'CASA'); await setVal('#colis', '1');
+  const d2 = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  await setVal('#dateEnvoi', d2); await setVal('#note', 'TEST CLAUDE APP – A SUPPRIMER');
   await click('#statuts .seg-btn:nth-child(1)');
   await shot('03_operation_remplie');
   await click('#send');
-  for (let i = 0; i < 40; i++) { await wait(1000); if (await page.$('#share')) break; }
-  log('OPERATION:', await page.$eval('#topTitle', e => e.textContent), '|', await page.$eval('#view .card', e => e.innerText).catch(() => ''));
+  for (let i = 0; i < 60; i++) { await wait(1000); if (await js(`!!document.querySelector('#share')`)) break; }
+  log('OPERATION:', await js(`document.querySelector('#topTitle').textContent + ' | ' + (document.querySelector('#view .card')||{}).innerText`));
   await shot('04_succes');
 
-  // 4) Scanner (saisie manuelle) + doublon
+  // Scanner : saisie manuelle + doublon
   await click('.nav [data-go="scan"]'); await wait(800);
-  const code = 'TESTCLAUDE' + Date.now().toString().slice(-6);
-  await page.$eval('#manual', (e, c) => { e.value = c; }, code); await click('#manualB');
-  for (let i = 0; i < 30; i++) { await wait(1000); const st = await page.evaluate(() => (JSON.parse(localStorage.scans || '[]')[0] || {}).status); if (st && st !== 'wait') break; }
-  log('SCAN 1:', await page.evaluate(() => JSON.parse(localStorage.scans || '[]')[0]));
-  await page.$eval('#manual', (e, c) => { e.value = c; }, code); await click('#manualB'); await wait(1500);
-  log('SCAN 2 (doublon attendu):', await page.evaluate(() => JSON.parse(localStorage.scans || '[]')[0]));
+  const code = 'TESTAPP' + Date.now().toString().slice(-7);
+  await setVal('#manual', code); await click('#manualB');
+  for (let i = 0; i < 40; i++) { await wait(1000); const s = await lastScan(); if (s && s.status !== 'wait') break; }
+  log('SCAN 1:', await lastScan());
+  await setVal('#manual', code); await click('#manualB'); await wait(1500);
+  log('SCAN 2 (doublon attendu):', await lastScan());
+  log('Lot en cours:', await js(`document.querySelector('#sessN').textContent`));
+  await click('#lotSend'); await wait(500); log('Envoi lot sans photo →', await toast());
   await shot('05_scanner');
 
-  // 5) Retour Sorties + mode sombre
-  await click('.nav [data-go="sorties"]'); await shot('06_retour_sorties');
+  // Retour Sorties
+  await click('.nav [data-go="sorties"]'); await wait(500);
+  await click('#soSend'); await wait(400); log('Retour Sorties sans photo →', await toast());
+  await shot('06_retour_sorties');
+
+  // Mode sombre
   await click('.nav [data-go="settings"]'); await wait(300); await click('#themes .chip:nth-child(3)');
   await click('.nav [data-go="op"]'); await shot('07_sombre_operation');
   await click('.nav [data-go="scan"]'); await shot('08_sombre_scanner');
+  await click('.nav [data-go="settings"]'); await wait(300); await click('#themes .chip:nth-child(1)');
   log('FIN DU TEST');
-  browser.disconnect();
+  ws.close(); process.exit(0);
 })().catch(e => { log('ERREUR TEST', e.stack || e.message); process.exit(1); });
