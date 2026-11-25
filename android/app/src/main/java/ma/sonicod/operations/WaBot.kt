@@ -231,20 +231,28 @@ object WaBot {
 
     fun parseLabel(text: String): Label {
         val flat = text.replace(Regex("\\s+"), " ")
-        var colis = Regex("NOMBRE\\s*D[EU]\\s*COLIS\\D{0,25}?(\\d{1,4})", RegexOption.IGNORE_CASE).find(flat)?.groupValues?.get(1)?.toIntOrNull()
-        val ci = flat.indexOf("COLIS", ignoreCase = true)
+        val isLabel = Regex("BON\\s*RETOUR|NOMBRE\\s*D|N[O0][A-Z]{0,4}\\s*D[EU]\\s*CO[LI]{0,2}S|\\b[BG8]R[VY][-\\s]?\\d{6,}", RegexOption.IGNORE_CASE).containsMatchIn(flat)
+        // « 201 | 2/2 » = 201 colis, étiquette 2 sur 2 ; la lecture colle parfois tout : « 2012/2 » → 201 + 2/2
+        var colis: Int? = null
+        val ci = Regex("N[O0][A-Z]{0,4}\\s*D[EU]\\s*CO[LI]{0,2}S|NOMBRE|COLIS", RegexOption.IGNORE_CASE).find(flat)?.range?.first ?: -1
         val zoneTxt = if (ci >= 0) flat.substring(ci) else flat
-        val p = Regex("(\\d{1,4})\\s*[|lI!]?\\s*(\\d{1,2})\\s*/\\s*(\\d{1,2})(?!\\d|\\s*/)").find(zoneTxt)
-        if (colis == null && p != null) colis = p.groupValues[1].toIntOrNull()
+        Regex("(\\d{1,6})\\s*([|lI!]?)\\s*(\\d{0,2})\\s*/\\s*(\\d{1,2})(?!\\d|\\s*/)").find(zoneTxt)?.let { p ->
+            var a = p.groupValues[1]; var x = p.groupValues[3]; val y = p.groupValues[4]; val sep = p.groupValues[2]
+            if (x.isEmpty() && sep.isEmpty() && a.length > y.length) {
+                val cand = a.takeLast(y.length)
+                if ((cand.toIntOrNull() ?: 0) in 1..(y.toIntOrNull() ?: 0)) { x = cand; a = a.dropLast(y.length) }
+            }
+            if (x.isNotEmpty() && a.isNotEmpty() && a.length <= 4 && (a.toIntOrNull() ?: 0) > 0) colis = a.toInt()
+        }
+        if (colis == null) colis = Regex("(?:NOMBRE|N[O0][A-Z]{0,4})\\s*D[EU]\\s*CO[LI]{0,2}S\\D{0,25}?(\\d{1,4})(?!\\d)", RegexOption.IGNORE_CASE).find(flat)?.groupValues?.get(1)?.toIntOrNull()
         val zone = Regex("Zone\\s*:?\\s*((?:HUB\\s+)?[A-Z][A-Za-zÉÈéè'\\- ]{2,25}?)(?=\\s+(?:Date|Magasin|T[ée]l|Adresse|NOMBRE|\\d)|$)", RegexOption.IGNORE_CASE)
             .find(flat)?.groupValues?.get(1)?.trim()?.uppercase(Locale.ROOT) ?: ""
         val brv = Regex("\\b[BG8]R[VY][-\\s]?(\\d{8,20})", RegexOption.IGNORE_CASE).find(flat)?.let { "BRV-" + it.groupValues[1] } ?: ""
-        // étiquette / bon (tolère les erreurs de lecture : « NOWE DE COLS », « GRV »…)
-        val isLabel = Regex("BON\\s*RETOUR|NOMBRE\\s*D|N[O0][A-Z]{0,4}\\s*D[EU]\\s*CO[LI]{0,2}S|\\b[BG8]R[VY][-\\s]?\\d{6,}", RegexOption.IGNORE_CASE).containsMatchIn(flat)
         // n° de suivi visibles (ex. N875620619) : la même étiquette sur 2 photos = 1 seul colis
         val tracks = Regex("\\b[A-Z]{1,3}\\d{8,12}\\b").findAll(flat.uppercase(Locale.ROOT)).map { it.value }
             .filter { !Regex("^[BG8]R[VY]").containsMatchIn(it) }.distinct().take(20).toList()
-        return Label(if (isLabel && colis != null && colis > 0) colis else null, brv, zone, isLabel, tracks)
+        val c = colis
+        return Label(if (isLabel && c != null && c > 0) c else null, brv, zone, isLabel, tracks)
     }
 
     /** Lit le texte d'une photo sur le téléphone (ML Kit), sinon via le serveur Google. */

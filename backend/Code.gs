@@ -641,12 +641,23 @@ function parseLabel_(text) {
   var tr = {};
   (flat.toUpperCase().match(/\b[A-Z]{1,3}\d{8,12}\b/g) || []).forEach(function (x) { if (!/^[BG8]R[VY]/.test(x)) tr[x] = 1; });
   r.tracks = Object.keys(tr).slice(0, 20);
-  var m = /NOMBRE\s*D[EU]\s*COLIS\D{0,25}?(\d{1,4})/i.exec(flat);
-  if (m) r.colis = Number(m[1]);
-  var ci = flat.search(/COLIS/i);
+  // « 201 | 2/2 » = 201 colis, étiquette 2 sur 2. La lecture colle parfois tout : « 2012/2 » → 201 + 2/2.
+  var ci = flat.search(/N[O0][A-Z]{0,4}\s*D[EU]\s*CO[LI]{0,2}S|NOMBRE|COLIS/i);
   var zoneTxt = ci >= 0 ? flat.slice(ci) : flat;
-  var p = /(\d{1,4})\s*[|lI!]?\s*(\d{1,2})\s*\/\s*(\d{1,2})(?!\d|\s*\/)/.exec(zoneTxt);
-  if (p) { if (r.colis == null) r.colis = Number(p[1]); r.part = p[2] + '/' + p[3]; }
+  var p = /(\d{1,6})\s*([|lI!]?)\s*(\d{0,2})\s*\/\s*(\d{1,2})(?!\d|\s*\/)/.exec(zoneTxt);
+  if (p) {
+    var a = p[1], x = p[3], y = p[4], sep = p[2];
+    if (!x && !sep && a.length > y.length) {           // « 2012/2 » : le numéro de l'étiquette est collé au nombre
+      var k = y.length, cand = a.slice(-k);
+      if (+cand >= 1 && +cand <= +y) { x = cand; a = a.slice(0, a.length - k); }
+    }
+    if (x && a && +a > 0 && a.length <= 4) { r.colis = +a; r.part = x + '/' + y; }
+  }
+  if (r.colis == null) {
+    var m0 = /(?:NOMBRE|N[O0][A-Z]{0,4})\s*D[EU]\s*CO[LI]{0,2}S\D{0,25}?(\d{1,4})(?!\d)/i.exec(flat);
+    if (m0) r.colis = +m0[1];
+  }
+  var m;
   m = /Zone\s*:?\s*((?:HUB\s+)?[A-Z][A-Za-zÉÈéè'\- ]{2,25}?)(?=\s+(?:Date|Magasin|T[ée]l|Adresse|NOMBRE|\d)|$)/i.exec(flat);
   if (m) r.zone = m[1].trim().toUpperCase();
   m = /(\d{2})\s*\/\s*(\d{2})\s*\/\s*(\d{4})/.exec(flat);
