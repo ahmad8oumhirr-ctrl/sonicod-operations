@@ -1,0 +1,473 @@
+package ma.sonicod.operations
+
+import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.net.Uri
+import android.os.Bundle
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
+import androidx.webkit.WebViewAssetLoader
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.IOException
+import java.util.UUID
+import java.util.concurrent.Executors
+
+class MainActivity : ComponentActivity() {
+
+    private lateinit var webView: WebView
+    private val io = Executors.newCachedThreadPool()
+
+    private var cameraCallback: String? = null
+    private var cameraFile: File? = null
+    private var pickCallback: String? = null
+
+    private val takePicture = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val cb = cameraCallback ?: return@registerForActivityResult
+        val f = cameraFile
+        cameraCallback = null
+        cameraFile = null
+        if (!ok || f == null) {
+            reply(cb, JSONObject().put("ok", true).put("photos", JSONArray()))
+            return@registerForActivityResult
+        }
+        io.execute {
+            val photos = JSONArray()
+            PhotoStore.importFile(this, f)?.let { id ->
+                photos.put(JSONObject().put("id", id).put("thumb", PhotoStore.thumbDataUrl(this, id)))
+            }
+            f.delete()
+            reply(cb, JSONObject().put("ok", true).put("photos", photos))
+        }
+    }
+
+    private val pickImages = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+        val cb = pickCallback ?: return@registerForActivityResult
+        pickCallback = null
+        io.execute {
+            val photos = JSONArray()
+            uris.forEach { uri ->
+                try {
+                    PhotoStore.importUri(this, uri)?.let { id ->
+                        photos.put(JSONObject().put("id", id).put("thumb", PhotoStore.thumbDataUrl(this, id)))
+                    }
+                } catch (e: Exception) {
+                    // image illisible : ignorée
+                }
+            }
+            reply(cb, JSONObject().put("ok", true).put("photos", photos))
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        webView = WebView(this)
+        setContentView(webView)
+
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            allowFileAccess = false
+            allowContentAccess = false
+            mediaPlaybackRequiresUserGesture = true
+        }
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                assetLoader.shouldInterceptRequest(request.url)
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val url = request.url
+                if (url.host == "appassets.androidplatform.net") return false
+                openExternal(url)
+                return true
+            }
+        }
+        webView.addJavascriptInterface(Bridge(), "SonicodNative")
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                webView.evaluateJavascript("window.sonicodBack ? String(window.sonicodBack()) : 'false'") { r ->
+                    if (r?.contains("true") != true) finish()
+                }
+            }
+        })
+
+        if (savedInstanceState == null) {
+            webView.loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
+        } else {
+            webView.restoreState(savedInstanceState)
+        }
+
+        io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)) }
+        if (OpQueue.list(this).isNotEmpty()) SyncWorker.schedule(this)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        webView.saveState(outState)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::webView.isInitialized) webView.evaluateJavascript("window.sonicodResume && window.sonicodResume()", null)
+    }
+
+    /** Renvoie un résultat à la page (window.__nativeCb). */
+    private fun reply(cb: String, data: JSONObject) {
+        val js = "window.__nativeCb && window.__nativeCb(" + JSONObject.quote(cb) + "," + JSONObject.quote(data.toString()) + ")"
+        runOnUiThread { webView.evaluateJavascript(js, null) }
+    }
+
+    private fun isInstalled(pkg: String): Boolean = try {
+        packageManager.getPackageInfo(pkg, 0)
+        true
+    } catch (e: PackageManager.NameNotFoundException) {
+        false
+    }
+
+    private fun whatsappPackage(): String? = listOf("com.whatsapp", "com.whatsapp.w4b").firstOrNull { isInstalled(it) }
+
+    private fun openExternal(uri: Uri) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Impossible d'ouvrir le lien", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun copyToClipboard(text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("SONICOD", text))
+    }
+
+    /** Fonctions appelées par l'interface (JavaScript). */
+    inner class Bridge {
+
+        @JavascriptInterface
+        fun getInfo(): String = JSONObject()
+            .put("serverUrl", Session.serverUrl(this@MainActivity))
+            .put("name", Session.name(this@MainActivity))
+            .put("version", BuildConfig.VERSION_NAME)
+            .put("whatsapp", whatsappPackage() != null)
+            .put("systemDark", (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
+            .toString()
+
+        @JavascriptInterface
+        fun setServerUrl(url: String) {
+            Session.setServerUrl(this@MainActivity, url)
+            if (OpQueue.list(this@MainActivity).isNotEmpty()) SyncWorker.schedule(this@MainActivity)
+        }
+
+        @JavascriptInterface
+        fun setName(name: String) = Session.setName(this@MainActivity, name)
+
+        /** Couleur des barres système selon le thème (clair / sombre). */
+        @JavascriptInterface
+        fun setDark(dark: Boolean) {
+            runOnUiThread {
+                window.navigationBarColor = if (dark) 0xFF17111E.toInt() else 0xFFFFFFFF.toInt()
+                window.statusBarColor = if (dark) 0xFF5E0B44.toInt() else 0xFFCF118B.toInt()
+            }
+        }
+
+        /** Ouvre le scanner de code-barres (Google). Réponse : {ok, value} ou {ok:false, cancelled}. */
+        @JavascriptInterface
+        fun scanBarcode(cb: String) {
+            runOnUiThread {
+                try {
+                    val options = GmsBarcodeScannerOptions.Builder()
+                        .setBarcodeFormats(Barcode.FORMAT_ALL_FORMATS)
+                        .enableAutoZoom()
+                        .build()
+                    GmsBarcodeScanning.getClient(this@MainActivity, options).startScan()
+                        .addOnSuccessListener { barcode ->
+                            reply(cb, JSONObject().put("ok", true).put("value", barcode.rawValue ?: ""))
+                        }
+                        .addOnCanceledListener {
+                            reply(cb, JSONObject().put("ok", false).put("cancelled", true))
+                        }
+                        .addOnFailureListener { e ->
+                            reply(cb, JSONObject().put("ok", false).put("error", "Scanner indisponible : " + (e.message ?: "")))
+                        }
+                } catch (e: Exception) {
+                    reply(cb, JSONObject().put("ok", false).put("error", "Scanner indisponible."))
+                }
+            }
+        }
+
+        /** Bip + vibration : court si OK, long si erreur / doublon. */
+        @JavascriptInterface
+        fun feedback(ok: Boolean) {
+            try {
+                ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90).apply {
+                    startTone(if (ok) ToneGenerator.TONE_PROP_BEEP else ToneGenerator.TONE_SUP_ERROR, if (ok) 150 else 450)
+                    android.os.Handler(mainLooper).postDelayed({ release() }, 700)
+                }
+            } catch (e: Exception) {
+            }
+            try {
+                val vib: Vibrator = if (Build.VERSION.SDK_INT >= 31) {
+                    (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+                } else {
+                    getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                }
+                vib.vibrate(VibrationEffect.createOneShot(if (ok) 60L else 400L, VibrationEffect.DEFAULT_AMPLITUDE))
+            } catch (e: Exception) {
+            }
+        }
+
+        /** Appel générique au serveur. La réponse arrive via window.__nativeCb(cb, json). */
+        @JavascriptInterface
+        fun api(cb: String, body: String) {
+            io.execute {
+                val res = try {
+                    val req = JSONObject(body).put("key", APP_KEY)
+                    Api.post(Session.serverUrl(this@MainActivity), req.toString())
+                } catch (e: IOException) {
+                    JSONObject().put("ok", false).put("network", true).put("error", "Pas de connexion internet.")
+                } catch (e: ServerException) {
+                    JSONObject().put("ok", false).put("code", e.code).put("error", e.message)
+                } catch (e: Exception) {
+                    JSONObject().put("ok", false).put("error", e.message ?: "Erreur")
+                }
+                reply(cb, res)
+            }
+        }
+
+        @JavascriptInterface
+        fun takePhoto(cb: String) {
+            runOnUiThread {
+                try {
+                    val dir = File(cacheDir, "camera").apply { mkdirs() }
+                    val f = File(dir, UUID.randomUUID().toString() + ".jpg")
+                    val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", f)
+                    cameraCallback = cb
+                    cameraFile = f
+                    takePicture.launch(uri)
+                } catch (e: Exception) {
+                    cameraCallback = null
+                    reply(cb, JSONObject().put("ok", false).put("error", "Caméra indisponible."))
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun pickPhotos(cb: String) {
+            runOnUiThread {
+                try {
+                    pickCallback = cb
+                    pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                } catch (e: Exception) {
+                    pickCallback = null
+                    reply(cb, JSONObject().put("ok", false).put("error", "Galerie indisponible."))
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun photoThumb(id: String): String = PhotoStore.thumbDataUrl(this@MainActivity, id)
+
+        @JavascriptInterface
+        fun deletePhoto(id: String) = PhotoStore.delete(this@MainActivity, id)
+
+        /**
+         * Enregistre l'opération dans le Google Sheet (+ photos).
+         * Sans réseau : l'opération est mise en file d'attente et envoyée automatiquement plus tard.
+         */
+        @JavascriptInterface
+        fun submit(cb: String, opJson: String, photoIdsJson: String) {
+            io.execute {
+                val ctx = this@MainActivity
+                val res = try {
+                    val op = JSONObject(opJson)
+                    val ids = JSONArray(photoIdsJson)
+                    try {
+                        val data = Submitter.send(ctx, op, ids)
+                        JSONObject().put("ok", true).put("data", data)
+                    } catch (e: IOException) {
+                        OpQueue.add(ctx, op, ids, "Pas de connexion")
+                        SyncWorker.schedule(ctx)
+                        JSONObject().put("ok", true).put("queued", true)
+                    }
+                } catch (e: ServerException) {
+                    JSONObject().put("ok", false).put("code", e.code).put("error", e.message)
+                } catch (e: Exception) {
+                    JSONObject().put("ok", false).put("error", e.message ?: "Erreur")
+                }
+                reply(cb, res)
+            }
+        }
+
+        @JavascriptInterface
+        fun queue(): String {
+            val arr = JSONArray()
+            OpQueue.list(this@MainActivity).forEach { item ->
+                val op = item.getJSONObject("op")
+                arr.put(
+                    JSONObject()
+                        .put("opId", op.optString("opId"))
+                        .put("livreur", op.optString("livreur"))
+                        .put("colis", op.optInt("colis"))
+                        .put("dateReception", op.optString("dateReception"))
+                        .put("photos", item.optJSONArray("photoIds")?.length() ?: 0)
+                        .put("attempts", item.optInt("attempts"))
+                        .put("lastError", item.optString("lastError"))
+                        .put("createdAt", item.optLong("createdAt"))
+                )
+            }
+            return arr.toString()
+        }
+
+        @JavascriptInterface
+        fun syncNow(cb: String) {
+            io.execute {
+                val ctx = this@MainActivity
+                val done = Submitter.flushQueue(ctx)
+                if (!done) SyncWorker.schedule(ctx)
+                reply(cb, JSONObject().put("ok", true).put("network", done).put("pending", OpQueue.list(ctx).size))
+            }
+        }
+
+        @JavascriptInterface
+        fun removeQueued(opId: String) {
+            OpQueue.remove(this@MainActivity, opId)
+        }
+
+        /**
+         * Ouvre WhatsApp avec le message et les photos (l'utilisateur choisit le groupe et appuie sur Envoyer).
+         * Renvoie "whatsapp", "chooser" ou "error". Ne confirme JAMAIS l'envoi.
+         */
+        @JavascriptInterface
+        fun shareWhatsApp(text: String, photoIdsJson: String, line1: String, line2: String): String {
+            val ctx = this@MainActivity
+            return try {
+                copyToClipboard(text)
+                val ids = JSONArray(photoIdsJson)
+                val n = ids.length()
+                val uris = ArrayList<Uri>()
+                for (i in 0 until n) {
+                    val id = ids.getString(i)
+                    // Photo avec bandeau (ville, colis, statut, date, photo i/n) ; sinon l'originale
+                    val f = (try {
+                        PhotoStore.stamped(ctx, id, line1, line2 + " · photo " + (i + 1) + "/" + n)
+                    } catch (e: Throwable) {
+                        null
+                    }) ?: PhotoStore.file(ctx, id) ?: continue
+                    uris.add(FileProvider.getUriForFile(ctx, "$packageName.files", f))
+                }
+                val intent = when {
+                    uris.size > 1 -> Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                        type = "image/jpeg"
+                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                    }
+                    uris.size == 1 -> Intent(Intent.ACTION_SEND).apply {
+                        type = "image/jpeg"
+                        putExtra(Intent.EXTRA_STREAM, uris[0])
+                    }
+                    else -> Intent(Intent.ACTION_SEND).apply { type = "text/plain" }
+                }
+                intent.putExtra(Intent.EXTRA_TEXT, text)
+                if (uris.isNotEmpty()) {
+                    val clip = ClipData.newRawUri("photos", uris[0])
+                    for (k in 1 until uris.size) clip.addItem(ClipData.Item(uris[k]))
+                    intent.clipData = clip
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val pkg = whatsappPackage()
+                runOnUiThread {
+                    try {
+                        if (pkg != null) {
+                            intent.setPackage(pkg)
+                            startActivity(intent)
+                        } else {
+                            startActivity(Intent.createChooser(intent, "Partager"))
+                        }
+                    } catch (e: Exception) {
+                        startActivity(Intent.createChooser(intent.setPackage(null), "Partager"))
+                    }
+                }
+                if (pkg != null) "whatsapp" else "chooser"
+            } catch (e: Exception) {
+                "error"
+            }
+        }
+
+        /** Ouvre exactement le lien d'invitation du groupe WhatsApp SONICOD. */
+        @JavascriptInterface
+        fun openWhatsAppGroup() {
+            runOnUiThread {
+                val uri = Uri.parse(WHATSAPP_GROUP_LINK)
+                val pkg = whatsappPackage()
+                try {
+                    val i = Intent(Intent.ACTION_VIEW, uri)
+                    if (pkg != null) i.setPackage(pkg)
+                    startActivity(i)
+                } catch (e: Exception) {
+                    openExternal(uri)
+                }
+            }
+        }
+
+        /** Ouvre un autre groupe WhatsApp (ex. « Retour Sorties »), lien exact chat.whatsapp.com. */
+        @JavascriptInterface
+        fun openWhatsAppLink(url: String) {
+            if (!url.startsWith("https://chat.whatsapp.com/")) return
+            runOnUiThread {
+                val uri = Uri.parse(url)
+                val pkg = whatsappPackage()
+                try {
+                    val i = Intent(Intent.ACTION_VIEW, uri)
+                    if (pkg != null) i.setPackage(pkg)
+                    startActivity(i)
+                } catch (e: Exception) {
+                    openExternal(uri)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun openUrl(url: String) {
+            if (url.startsWith("https://")) runOnUiThread { openExternal(Uri.parse(url)) }
+        }
+
+        @JavascriptInterface
+        fun copyText(text: String) {
+            runOnUiThread { copyToClipboard(text) }
+        }
+
+        @JavascriptInterface
+        fun toast(msg: String) {
+            runOnUiThread { Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show() }
+        }
+    }
+}

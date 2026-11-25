@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.Sonicod" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/sonicod_purple</item>
+        <item name="android:colorPrimaryDark">@color/sonicod_purple</item>
+        <item name="android:colorAccent">@color/sonicod_violet</item>
+        <item name="android:statusBarColor">@color/sonicod_purple</item>
+        <item name="android:navigationBarColor">@color/white</item>
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+</resources>
