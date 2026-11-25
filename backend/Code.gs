@@ -403,13 +403,17 @@ function pendingFormat_(sh) {
   sh.setConditionalFormatRules(rules);
 }
 
+/**
+ * Ajoute (ou complète) le retour d'un groupe pour un jour.
+ * Même « pid » (groupe + jour) : on ajoute les nouvelles photos / nouveaux PDF et on met à jour le nombre de colis.
+ */
 function addPending_(req) {
   var pid = String(req.pid || '');
   if (!/^[A-Za-z0-9-]{8,64}$/.test(pid)) throw new AppError('Identifiant invalide.');
   var livreur = String(req.livreur || '').trim();
   if (!livreur) throw new AppError('Choisissez la ville / le livreur.');
   var colis = Number(req.colis);
-  if (!(colis > 0) || Math.floor(colis) !== colis) throw new AppError('Le nombre de colis doit être un nombre entier positif.');
+  if (!(colis > 0) || Math.floor(colis) !== colis) colis = '';       // inconnu : à compléter dans le Sheet
   var d = parseIsoDate_(req.date, 'Date');
   var note = String(req.note || '').trim().slice(0, 1000);
   var who = String(req.who || '').trim().slice(0, 30);
@@ -417,48 +421,60 @@ function addPending_(req) {
   var files = Array.isArray(req.files) ? req.files.slice(0, 5) : [];
 
   return withLock_(function () {
+    var sh = pendingSheet_();
     var prev = seen_('pd_' + pid);
-    if (prev) return { row: prev.row, duplicate: true };
-    var links = [];
-    if (photos.length) {
-      var folder = monthFolder_(d);
-      var base = 'ATTENTE_' + Utilities.formatDate(d, TZ, 'yyyy-MM-dd') + '_' + livreur.replace(/[^\w-]+/g, '_') + '_' + pid.slice(0, 8);
-      photos.forEach(function (ph, i) {
-        if (!ph || !ph.b64) return;
-        var file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(ph.b64), 'image/jpeg', base + '_' + (i + 1) + '.jpg'));
-        try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
-        links.push('https://drive.google.com/file/d/' + file.getId() + '/view');
-      });
+    var r = prev ? prev.row : 0;
+    if (r && String(sh.getRange(r, 10).getValue()) !== pid) r = 0;   // ligne déplacée : on la recherche
+    if (!r && prev) {
+      var refs = sh.getRange(2, 10, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+      for (var k = 0; k < refs.length; k++) if (String(refs[k][0]) === pid) { r = k + 2; break; }
     }
-    // Bons (PDF…) → Drive
-    var docs = [];
+    var isNew = !r;
+
+    // Photos et bons → Drive
+    var folder = monthFolder_(d);
+    var base = 'RETOUR_' + Utilities.formatDate(d, TZ, 'yyyy-MM-dd') + '_' + livreur.replace(/[^\w-]+/g, '_') + '_' + Date.now();
+    var newPhotos = [];
+    photos.forEach(function (ph, n) {
+      if (!ph || !ph.b64) return;
+      var file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(ph.b64), 'image/jpeg', base + '_' + (n + 1) + '.jpg'));
+      try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+      newPhotos.push('https://drive.google.com/file/d/' + file.getId() + '/view');
+    });
+    var newDocs = [];
     files.forEach(function (f) {
       if (!f || !f.b64) return;
       var name = String(f.name || 'bon.pdf').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 120);
-      var mime = String(f.mime || 'application/pdf');
-      var file = monthFolder_(d).createFile(Utilities.newBlob(Utilities.base64Decode(f.b64), mime, name));
+      var file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(f.b64), String(f.mime || 'application/pdf'), name));
       try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
-      docs.push({ name: name, url: 'https://drive.google.com/file/d/' + file.getId() + '/view' });
+      newDocs.push({ url: 'https://drive.google.com/file/d/' + file.getId() + '/view', label: '📄 ' + name });
     });
-    var sh = pendingSheet_();
-    var r = sh.getLastRow() + 1;
-    sh.getRange(r, 1, 1, PENDING_HEADER.length).setValues([[d, livreur, colis, 'En attente', '', note, '', '', who, pid]]);
-    if (docs.length) {
+
+    var photoLinks = newPhotos, docs = newDocs;
+    if (isNew) {
+      r = sh.getLastRow() + 1;
+      sh.getRange(r, 1, 1, PENDING_HEADER.length).setValues([[d, livreur, colis, 'En attente', '', note, '', '', who, pid]]);
+      sh.getRange(r, 1).setNumberFormat('dd/MM/yyyy');
+    } else {
+      photoLinks = runsOf_(sh.getRange(r, 7).getRichTextValue()).map(function (x) { return x.url; }).concat(newPhotos);
+      docs = runsOf_(sh.getRange(r, 8).getRichTextValue()).concat(newDocs);
+      if (colis !== '') sh.getRange(r, 3).setValue(colis);
+      if (note) sh.getRange(r, 6).setValue(note);
+    }
+    if (newPhotos.length || isNew) setPhotosCell_(sh.getRange(r, 7), photoLinks, '');
+    if (newDocs.length) {
       var txt = '', runs = [];
-      docs.forEach(function (doc, i) {
-        if (i) txt += '\n';
-        var label = '📄 ' + doc.name;
-        runs.push([txt.length, txt.length + label.length, doc.url]);
-        txt += label;
+      docs.forEach(function (doc, n) {
+        if (n) txt += '\n';
+        runs.push([txt.length, txt.length + doc.label.length, doc.url]);
+        txt += doc.label;
       });
       var rb = SpreadsheetApp.newRichTextValue().setText(txt);
       runs.forEach(function (x) { rb.setLinkUrl(x[0], x[1], x[2]); });
       sh.getRange(r, 8).setRichTextValue(rb.build());
     }
-    sh.getRange(r, 1).setNumberFormat('dd/MM/yyyy');
-    setPhotosCell_(sh.getRange(r, 7), links, '');
     remember_('pd_' + pid, { row: r });
-    return { row: r, duplicate: false, docs: docs.length };
+    return { row: r, created: isNew, duplicate: !isNew, addedPhotos: newPhotos.length, addedDocs: newDocs.length, docs: docs.length };
   });
 }
 
@@ -490,7 +506,7 @@ function listPending_() {
       row: i + 2, pid: String(v[9]), statut: waiting ? 'En attente' : 'VALIDER',
       date: v[0] instanceof Date ? Utilities.formatDate(v[0], TZ, 'yyyy-MM-dd') : String(v[0]),
       dateValidation: v[4] instanceof Date ? Utilities.formatDate(v[4], TZ, 'yyyy-MM-dd') : '',
-      livreur: String(v[1]), colis: Number(v[2]) || 0, note: String(v[5]),
+      livreur: String(v[1]), colis: Number(v[2]) || null, note: String(v[5]),
       photoLinks: runsOf_(richP[i][0]).map(function (x) { return x.url; }),
       docs: runsOf_(richD[i][0])
     });

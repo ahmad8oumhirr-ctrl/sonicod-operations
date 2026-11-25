@@ -134,7 +134,7 @@
     return true;
   }
   window.sonicodBack = back;
-  window.sonicodResume = function () { applyTheme(); refreshSyncPill(); retryScans(); if (window.sonicodShareReady) window.sonicodShareReady(); };
+  window.sonicodResume = function () { applyTheme(); refreshSyncPill(); retryScans(); };
 
   function setHeader(title, sub) {
     $('#topTitle').textContent = title || '';
@@ -670,51 +670,14 @@
   function savePend() { store('pend', state.pend); }
 
   ROUTES.attente = function () {
-    if (!state.pend) state.pend = store('pend') || newPend();
     if (!state.pendList) state.pendList = store('pendList') || [];
-    var o = state.pend, c = state.config;
-    var cities = c.cities.slice();
-    if (o.livreur && cities.indexOf(o.livreur) < 0) cities.unshift(o.livreur);
-    setHeader('Retours en attente', 'Annoncés dans les groupes WhatsApp');
+    var w = state.pendList.filter(function (p) { return p.statut !== 'VALIDER'; }).length;
+    setHeader('Retours des groupes', w ? w + ' en attente · ajoutés par le bot WhatsApp' : 'Ajoutés automatiquement par le bot WhatsApp');
     view(
-      (o.shared ? '<div class="note info"><b>Reçu depuis WhatsApp</b><div class="share-box" style="margin:8px 0 0">' + esc(o.shared) + '</div></div>' : '') +
-      '<div class="card"><div class="sec"><span class="num">＋</span><b>Nouveau retour annoncé</b></div>' +
-      '<div class="field" id="f-pLivreur"><label>Ville / Livreur</label><select class="input" id="pLivreur"><option value="">Choisir…</option>' +
-      cities.map(function (x) { return '<option' + (x === o.livreur ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') +
-      '<option value="__add">＋ Autre ville…</option></select></div>' +
-      '<div class="row2"><div class="field" id="f-pColis"><label>Colis</label><input class="input" id="pColis" type="number" inputmode="numeric" min="1" placeholder="Ex : 3" value="' + esc(o.colis) + '"></div>' +
-      '<div class="field" id="f-pDate"><label>Date</label><input class="input" id="pDate" type="date" value="' + esc(o.date) + '"></div></div>' +
-      '<div class="field"><label>Note <span class="opt">(facultatif)</span></label><textarea class="input" id="pNote" placeholder="Ex : BRV-2611…  /  2 sacs">' + esc(o.note) + '</textarea></div>' +
-      '<div class="photo-btns"><button type="button" class="pbtn" id="pCam">' + ic('cam') + 'Photo</button><button type="button" class="pbtn" id="pGal">' + ic('img') + 'Galerie</button></div>' +
-      '<div class="photos" id="pPhotos"></div>' +
-      ((o.files || []).length ? '<div class="docs">' + o.files.map(function (f, i) { return '<div class="doc">📄 <span>' + esc(f.name) + '</span><button type="button" class="x2" data-doc="' + i + '">✕</button></div>'; }).join('') + '</div>' : '') +
-      '<button class="btn btn-primary" id="pSave" style="margin-top:14px">' + ic('clock') + 'Enregistrer « En attente »</button></div>' +
-      '<div class="card"><div class="sec"><b>Retours des groupes</b><small><button class="btn btn-ghost btn-sm" id="pReload">' + ic('sync') + 'Actualiser</button></small></div>' +
-      '<div class="list" id="pList">' + pendListHtml() + '</div></div>'
+      '<div class="sec" style="margin:0 2px 10px"><b>Par groupe et par jour</b><small><button class="btn btn-ghost btn-sm" id="pReload">' + ic('sync') + 'Actualiser</button></small></div>' +
+      '<div id="pList">' + pendListHtml() + '</div>'
     );
-    var redraw = function () { renderPhotoGrid(o.photos, '#pPhotos', '#none', savePend); };
-    redraw();
-    var sync = function () {
-      var lv = $('#pLivreur').value; if (lv !== '__add') o.livreur = lv;
-      o.colis = $('#pColis').value.trim(); o.date = $('#pDate').value; o.note = $('#pNote').value; savePend();
-    };
-    ['#pColis', '#pDate', '#pNote'].forEach(function (sel) { $(sel).addEventListener('input', function () { sync(); var f = $(sel).closest('.field'); if (f) clearErr(f); }); });
-    $('#pLivreur').addEventListener('change', function () {
-      if ($('#pLivreur').value !== '__add') { sync(); clearErr($('#f-pLivreur')); return; }
-      $('#pLivreur').value = o.livreur || '';
-      promptBox('Nouvelle ville / livreur', 'Ex : TIZNIT').then(function (v) {
-        if (!v) return;
-        o.livreur = v; savePend();
-        if (state.config.cities.indexOf(v) < 0) state.config.cities.push(v);
-        store('config', state.config); render();
-        api('addCity', { city: v }).then(function (r) { if (r.ok) { state.config = r.data; store('config', r.data); } });
-      });
-    });
-    $('#pCam').onclick = function () { addPhotosTo(o.photos, 'takePhoto', function () { savePend(); redraw(); }); };
-    $('#pGal').onclick = function () { addPhotosTo(o.photos, 'pickPhotos', function () { savePend(); redraw(); }); };
     $('#pReload').onclick = function () { loadPending(true); };
-    $$('[data-doc]').forEach(function (b) { b.onclick = function () { o.files.splice(Number(b.getAttribute('data-doc')), 1); savePend(); render(); }; });
-    $('#pSave').onclick = function () { sync(); savePending(); };
     bindPendList();
     loadPending(false);
   };
@@ -784,58 +747,14 @@
       if (!r.ok) { if (manual) toast(r.network ? 'Pas de connexion' : (r.error || 'Erreur'), 'err'); return; }
       state.pendList = r.data; store('pendList', r.data);
       var el = $('#pList');
-      if (el && state.route === 'attente') { el.innerHTML = pendListHtml(); bindPendList(); }
+      if (el && state.route === 'attente') {
+        el.innerHTML = pendListHtml(); bindPendList();
+        var w = r.data.filter(function (p) { return p.statut !== 'VALIDER'; }).length;
+        setHeader('Retours des groupes', w ? w + ' en attente · ajoutés par le bot WhatsApp' : 'Ajoutés automatiquement par le bot WhatsApp');
+      }
       if (manual) toast('Liste à jour ✓', 'ok');
     });
   }
-  function savePending() {
-    var o = state.pend, errs = {};
-    if (!o.livreur) errs.pLivreur = 'Choisissez la ville / le livreur.';
-    if (!/^\d+$/.test(o.colis) || Number(o.colis) <= 0) errs.pColis = 'Nombre de colis ?';
-    if (!o.date) errs.pDate = 'Date ?';
-    var keys = Object.keys(errs);
-    keys.forEach(function (k) { setErr(k, errs[k]); });
-    if (keys.length) { toast('Vérifiez les champs en rouge', 'err'); return; }
-    var body = { action: 'addPending', pid: o.pid, livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim() };
-    var ids = o.photos.map(function (p) { return p.id; });
-    var b = $('#pSave'); b.disabled = true; b.innerHTML = '<i class="spin"></i> Enregistrement…';
-    var docs = (o.files || []).map(function (f) { return { id: f.id, name: f.name, mime: f.mime }; });
-    var p = NATIVE ? nat('apiWithPhotos', JSON.stringify(body), JSON.stringify(ids), JSON.stringify(docs)) : api('addPending', body);
-    p.then(function (r) {
-      b.disabled = false; b.innerHTML = ic('clock') + 'Enregistrer « En attente »';
-      if (!r.ok) { toast(r.error || 'Erreur', 'err'); return; }
-      toast('✓ ' + o.livreur + ' · ' + o.colis + ' colis en attente' + (docs.length ? ' + bon PDF' : ''), 'ok');
-      state.pendList.unshift({ row: r.data.row, pid: o.pid, statut: 'En attente', livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim(), photoLinks: [], docs: [] });
-      store('pendList', state.pendList);
-      state.pend = newPend(); savePend();
-      render();
-      loadPending(false);
-    });
-  }
-
-  /** Contenu partagé depuis WhatsApp → formulaire « En attente » pré-rempli. */
-  function checkShared() {
-    if (!NATIVE || !NATIVE.takeShared) return;
-    var raw = NATIVE.takeShared();
-    if (!raw) return;
-    var sh; try { sh = JSON.parse(raw); } catch (e) { return; }
-    var o = newPend();
-    o.photos = (sh.photos || []).slice(0, 10);
-    var text = String(sh.text || '').trim();
-    o.files = (sh.files || []).filter(function (f) { return f && f.id; });
-    var names = o.files.map(function (f) { return f.name; }).join(', ');
-    o.shared = [text, names].filter(Boolean).join('\n');
-    o.note = text.slice(0, 200) || names.replace(/\.pdf$/i, '');
-    var m = /(\d{1,4})\s*(colis|coli|cols|kolis)/i.exec(text);
-    if (m) o.colis = m[1];
-    var low = text.toLowerCase();
-    (state.config.cities || []).forEach(function (cty) { if (!o.livreur && low.indexOf(cty.toLowerCase()) >= 0) o.livreur = cty; });
-    state.pend = o; savePend();
-    go('attente');
-    toast('Reçu depuis WhatsApp : complétez puis Enregistrer', 'ok');
-  }
-  window.sonicodShareReady = checkShared;
-
   /* ================= RETOUR SORTIES (photos → groupe WhatsApp) ================= */
   function newSortie() { return { date: todayIso(), note: '', photos: [], sent: false }; }
 
@@ -980,5 +899,4 @@
   $('#syncPill').onclick = function () { go('settings'); };
   go('op', {}, { replace: true });
   if (info().serverUrl) { loadConfig(); retryScans(); }
-  checkShared();
 })();

@@ -129,7 +129,7 @@
     const groups = (await store.get('groups')) || {};
     const { imgs, docs } = collectDay(dayIso);
     if (!imgs.length && !docs.length) { log(group + ' : rien pour ce jour.'); return 0; }
-    const rec = { key: group + '|' + dayIso, group, day: dayIso, colis: null, brvs: {}, zone: '', photos: [], labels: [], docs: [], livreur: groups[group] || '', checked: true, status: '' };
+    const rec = { key: group + '|' + dayIso, group, day: dayIso, colis: null, brvs: {}, zone: '', photos: [], labels: [], docs: [], livreur: groups[group] || '', checked: true, status: '', photoHashes: [] };
     results = results.filter(r => r.key !== rec.key);
     results.push(rec);
     // Photos : on garde tout (max 10) et on lit les étiquettes
@@ -137,7 +137,14 @@
       log(group + ' : photo ' + (i + 1) + '/' + imgs.length + '…');
       let b64;
       try { b64 = imgToB64(imgs[i]); } catch (e) { log('Photo illisible'); continue; }
-      const r = await api({ action: 'ocrLabel', b64 });
+      const ph = hash(b64.slice(0, 4000) + b64.length);
+      const cache = (await store.get('ocr')) || {};
+      let r = cache[ph] ? { ok: true, data: cache[ph] } : await api({ action: 'ocrLabel', b64 });
+      if (r.ok && !cache[ph]) {
+        cache[ph] = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone };
+        const keys = Object.keys(cache); if (keys.length > 400) keys.slice(0, 100).forEach(k => delete cache[k]);
+        await store.set('ocr', cache);
+      }
       const isLabel = r.ok && r.data.colis != null;
       if (isLabel) {
         const d = r.data, k = d.brv || ('n' + d.colis);
@@ -145,7 +152,7 @@
         if (d.zone && !rec.zone) rec.zone = d.zone;
         rec.labels.push(b64);
       } else if (!r.ok && r.network) { log('Serveur injoignable'); break; }
-      if (rec.photos.length < 10) rec.photos.push(b64);
+      if (rec.photos.length < 10) { rec.photos.push(b64); rec.photoHashes.push(ph); }
       rec.colis = Object.keys(rec.brvs).length ? Object.values(rec.brvs).reduce((a, b) => a + b, 0) : null;
       if (!rec.livreur) rec.livreur = guessCity(group, rec.zone, groups);
       renderResults();
@@ -161,7 +168,8 @@
       if (viewerClose) fireClick(viewerClose.closest('[role="button"]') || viewerClose);
       renderResults();
     }
-    log(group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF, ' + (rec.colis == null ? 'colis à saisir' : rec.colis + ' colis') + '.');
+    log(group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF, ' + (rec.colis == null ? 'colis non lus' : rec.colis + ' colis') + '.');
+    await sendRecord(rec);                      // envoi automatique au Google Sheet
     return 1;
   }
 
@@ -213,6 +221,8 @@
     const url = (await store.get('serverUrl')) || '';
     const group = chatName();
     const today = isoOf(new Date());
+    const auto = (await store.get('auto')) || { on: false, min: 30 };
+    const lastRun = (await store.get('lastRun')) || '—';
     const cityOpts = sel => '<option value="">— Ville / Livreur —</option>' + cities.map(c => '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
     panel.innerHTML =
       '<div class="h"><b>⚡ SONICOD · Retours du jour</b><button id="snc-x">✕</button></div><div class="b">' +
@@ -221,8 +231,10 @@
       (group ? '<label>Ce groupe correspond à</label><select id="snc-city">' + cityOpts(groups[group] || '') + '</select>' : '') +
       '<div class="row"><button class="btn" id="snc-one"' + (group ? '' : ' disabled') + '>Lire ce groupe</button>' +
       '<button class="btn o" id="snc-all"' + (Object.keys(groups).length ? '' : ' disabled') + '>Lire tous mes groupes (' + Object.keys(groups).length + ')</button></div>' +
+      '<div class="autobox"><label style="margin:0;display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px;color:#1D1428"><input type="checkbox" id="snc-auto" style="width:auto"' + (auto.on ? ' checked' : '') + '> <b>Mode automatique</b> : lire tous mes groupes toutes les</label>' +
+      '<div class="row" style="align-items:center;margin-top:6px"><input type="number" id="snc-min" min="10" value="' + auto.min + '" style="max-width:80px"> <span>minutes · dernière lecture : ' + esc(lastRun) + '</span></div></div>' +
       '<div id="snc-res"></div>' +
-      '<button class="btn g" id="snc-save" style="display:none">Enregistrer « En attente »</button>' +
+      '<button class="btn g" id="snc-save" style="display:none">Renvoyer au Sheet</button>' +
       '<div class="log" id="snc-log">' + esc(logLines.slice(-12).join('\n')) + '</div>' +
       '<details><summary>Mes groupes retour</summary>' +
       (Object.keys(groups).length ? Object.keys(groups).map(g => '<div class="grp">' + esc(g) + ' → ' + esc(groups[g] || '?') + ' <a href="#" data-del="' + esc(g) + '" style="float:right;color:#DC2626">retirer</a></div>').join('') : '<p>Aucun. Ouvrez un groupe et choisissez sa ville ci-dessus.</p>') +
@@ -244,15 +256,10 @@
       busy(true); await analyseOpenChat(day); busy(false);
     };
     $('#snc-all').onclick = async () => {
-      const day = $('#snc-day').value || today;
-      busy(true);
-      for (const g of Object.keys(groups)) {
-        log('Ouverture : ' + g + '…');
-        if (await openChat(g)) await analyseOpenChat(day);
-        else log('Groupe introuvable : ' + g);
-      }
-      busy(false); renderPanel();
+      busy(true); await runAll($('#snc-day').value || today); busy(false); renderPanel();
     };
+    $('#snc-auto').onchange = async () => { await store.set('auto', { on: $('#snc-auto').checked, min: Number($('#snc-min').value) || 30 }); await store.set('lastAuto', 0); log($('#snc-auto').checked ? 'Mode automatique activé.' : 'Mode automatique arrêté.'); };
+    $('#snc-min').onchange = async () => { await store.set('auto', { on: $('#snc-auto').checked, min: Number($('#snc-min').value) || 30 }); };
     $('#snc-save').onclick = saveAll;
     renderResults();
   }
@@ -264,7 +271,7 @@
     if (!box) return;
     box.innerHTML = results.map((r, i) =>
       '<div class="res"><div class="m">' +
-      '<div class="t"><input type="checkbox" data-ck="' + i + '"' + (r.checked ? ' checked' : '') + (r.status === 'ok' ? ' disabled' : '') + '> ' + esc(r.group) + ' · ' + fmt(r.day) + '</div>' +
+      '<div class="t">' + esc(r.group) + ' · ' + fmt(r.day) + '</div>' +
       '<div class="thumbs">' + r.photos.map(b => '<img src="data:image/jpeg;base64,' + b + '">').join('') + '</div>' +
       '<div class="s">' + r.photos.length + ' photo(s)' + (r.docs.length ? ' · ' + r.docs.map(d => '📄 ' + esc(d.name)).join(', ') : ' · pas de PDF') +
       (Object.keys(r.brvs).length ? ' · ' + Object.keys(r.brvs).length + ' étiquette(s)' : '') + (r.zone ? ' · ' + esc(r.zone) : '') + '</div>' +
@@ -273,36 +280,69 @@
       (r.status ? '<div class="' + (r.status === 'ok' ? 'ok' : 'err') + '">' + esc(r.msg) + '</div>' : '') +
       '</div></div>').join('');
     $$('[data-ck]').forEach(c => c.onchange = () => { results[+c.dataset.ck].checked = c.checked; });
-    $$('[data-n]').forEach(c => c.oninput = () => { results[+c.dataset.n].colis = c.value === '' ? null : Number(c.value); });
-    $$('[data-v]').forEach(c => c.onchange = () => { results[+c.dataset.v].livreur = c.value; });
+    $$('[data-n]').forEach(c => c.onchange = () => { const r = results[+c.dataset.n]; r.colis = c.value === '' ? null : Number(c.value); sendRecord(r); });
+    $$('[data-v]').forEach(c => c.onchange = async () => { const r = results[+c.dataset.v]; r.livreur = c.value; const g = (await store.get('groups')) || {}; if (c.value) { g[r.group] = c.value; await store.set('groups', g); } sendRecord(r); });
     const save = $('#snc-save');
     if (save) {
-      const n = results.filter(r => r.checked && r.status !== 'ok').length;
-      save.style.display = results.length ? 'block' : 'none';
-      save.textContent = 'Enregistrer « En attente » (' + n + ')';
+      const n = results.filter(r => r.status === 'err').length;
+      save.style.display = n ? 'block' : 'none';
+      save.textContent = 'Renvoyer au Sheet (' + n + ')';
     }
   }
 
-  async function saveAll() {
-    const todo = results.filter(r => r.checked && r.status !== 'ok');
-    if (todo.some(r => !r.livreur)) { log('Choisissez la ville pour chaque groupe.'); return; }
-    if (todo.some(r => !(r.colis > 0))) { log('Indiquez le nombre de colis pour chaque groupe.'); return; }
-    busy(true);
-    for (const r of todo) {
-      log('Envoi ' + r.group + '…');
-      const res = await api({
-        action: 'addPending', pid: 'wa-' + hash(r.key), livreur: r.livreur, colis: r.colis, date: r.day, who: 'Bot WhatsApp',
-        note: r.group + (Object.keys(r.brvs).filter(k => k.startsWith('BRV')).length ? ' · ' + Object.keys(r.brvs).filter(k => k.startsWith('BRV')).join(', ') : ''),
-        photos: r.photos.map(b64 => ({ b64 })),
-        files: r.docs.map(d => ({ b64: d.b64, name: d.name, mime: 'application/pdf' }))
-      });
-      if (res.ok) { r.status = 'ok'; r.msg = res.data.duplicate ? '✓ Déjà enregistré pour ce jour' : '✓ Enregistré « En attente » (ligne ' + res.data.row + ')'; }
-      else { r.status = 'err'; r.msg = res.error || 'Erreur'; }
-      renderResults();
-    }
-    busy(false);
-    log('Enregistrement terminé.');
+  /** Envoie au Sheet seulement ce qui est nouveau (photos / PDF pas encore envoyés). */
+  async function sendRecord(r) {
+    if (!r.livreur) { r.status = 'err'; r.msg = 'Choisissez la ville de ce groupe (menu ci-dessus) puis relisez.'; renderResults(); return; }
+    const pid = 'wa-' + hash(r.key);
+    const sent = (await store.get('sent')) || {};
+    const done = sent[pid] || { p: [], d: [], c: null };
+    const photos = [], ph = [];
+    r.photos.forEach((b64, i) => { const h = r.photoHashes[i]; if (done.p.indexOf(h) < 0) { photos.push({ b64 }); ph.push(h); } });
+    const files = r.docs.filter(d => done.d.indexOf(d.name) < 0).map(d => ({ b64: d.b64, name: d.name, mime: 'application/pdf' }));
+    if (done.c === r.colis && !photos.length && !files.length && done.l === r.livreur) { r.status = 'ok'; r.msg = '✓ Déjà à jour dans le Sheet'; renderResults(); return; }
+    log('Envoi ' + r.group + ' au Sheet…');
+    const brv = Object.keys(r.brvs).filter(k => k.startsWith('BRV'));
+    const res = await api({
+      action: 'addPending', pid, livreur: r.livreur, colis: r.colis || '', date: r.day, who: 'Bot WhatsApp',
+      note: r.group + (brv.length ? ' · ' + brv.join(', ') : ''), photos, files
+    });
+    if (res.ok) {
+      done.p = done.p.concat(ph); done.d = done.d.concat(files.map(f => f.name)); done.c = r.colis; done.l = r.livreur;
+      sent[pid] = done;
+      const keys = Object.keys(sent); if (keys.length > 300) keys.slice(0, 100).forEach(k => delete sent[k]);
+      await store.set('sent', sent);
+      r.status = 'ok';
+      r.msg = (res.data.created ? '✓ Ajouté au Sheet' : '✓ Mis à jour') + ' (ligne ' + res.data.row + ')' +
+        (res.data.addedPhotos ? ' · +' + res.data.addedPhotos + ' photo(s)' : '') + (res.data.addedDocs ? ' · +' + res.data.addedDocs + ' PDF' : '');
+    } else { r.status = 'err'; r.msg = res.error || 'Erreur'; }
+    renderResults();
   }
+
+  async function saveAll() {
+    busy(true);
+    for (const r of results.filter(x => x.status !== 'ok')) await sendRecord(r);
+    busy(false);
+  }
+
+  /* ---------------- mode automatique ---------------- */
+  let autoBusy = false;
+  async function runAll(dayIso) {
+    const groups = (await store.get('groups')) || {};
+    for (const g of Object.keys(groups)) {
+      log('Ouverture : ' + g + '…');
+      if (await openChat(g)) await analyseOpenChat(dayIso);
+      else log('Groupe introuvable : ' + g);
+    }
+    await store.set('lastRun', new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
+  }
+  setInterval(async () => {
+    const auto = (await store.get('auto')) || { on: false, min: 30 };
+    const last = (await store.get('lastAuto')) || 0;
+    if (!auto.on || autoBusy || Date.now() - last < auto.min * 60000) return;
+    autoBusy = true;
+    await store.set('lastAuto', Date.now());
+    try { await runAll(isoOf(new Date())); } finally { autoBusy = false; }
+  }, 60000);
 
   /* ---------------- démarrage ---------------- */
   async function start() {
