@@ -26,7 +26,8 @@ var RETOUR_HEADER_ROW = 3;              // ligne "Traking | La Date"
 var RETOUR_FIRST_ROW = 4;
 
 var PENDING_SHEET = 'Retours en attente';
-var PENDING_HEADER = ['DATE ANNONCE', 'VILLE / LIVREUR', 'COLIS', 'STATUT', 'DATE RÉCEPTION', 'NOTE', 'PHOTOS', 'BON (PDF)', 'PAR', 'RÉF'];
+var PENDING_HEADER = ['DATE', 'VILLE / LIVREUR', 'COLIS', 'STATUT', 'DATE VALIDATION', 'NOTE / GROUPE', 'PHOTOS', 'BON (PDF)', 'PAR', 'RÉF'];
+var PENDING_STATUSES = ['En attente', 'VALIDER'];
 
 var PHOTO_FOLDER_NAME = 'SONICOD – Photos opérations';
 var WHATSAPP_GROUP = 'https://chat.whatsapp.com/LP2gQjIm7R95AYBLIj27Ad';
@@ -388,7 +389,18 @@ function pendingSheet_() {
   sh.setColumnWidths(1, PENDING_HEADER.length, 130);
   sh.setColumnWidth(6, 260);
   sh.hideColumns(10);
+  pendingFormat_(sh);
   return sh;
+}
+
+/** Liste déroulante « En attente / VALIDER » + couleurs, pour valider aussi directement dans le Sheet. */
+function pendingFormat_(sh) {
+  var rng = sh.getRange(2, 4, Math.max(sh.getMaxRows() - 1, 1), 1);
+  rng.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(PENDING_STATUSES, true).setAllowInvalid(true).build());
+  var rules = sh.getConditionalFormatRules().filter(function (r) { return !r.getRanges().some(function (x) { return x.getColumn() === 4; }); });
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('En attente').setBackground('#FFF4E0').setFontColor('#B45309').setBold(true).setRanges([rng]).build());
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('VALIDER').setBackground('#E7F7EE').setFontColor('#15803D').setBold(true).setRanges([rng]).build());
+  sh.setConditionalFormatRules(rules);
 }
 
 function addPending_(req) {
@@ -444,24 +456,43 @@ function addPending_(req) {
       sh.getRange(r, 8).setRichTextValue(rb.build());
     }
     sh.getRange(r, 1).setNumberFormat('dd/MM/yyyy');
-    sh.getRange(r, 4).setBackground('#FFF4E0').setFontColor('#B45309').setFontWeight('bold');
     setPhotosCell_(sh.getRange(r, 7), links, '');
     remember_('pd_' + pid, { row: r });
     return { row: r, duplicate: false, docs: docs.length };
   });
 }
 
+function runsOf_(rich) {
+  var out = [];
+  if (!rich) return out;
+  rich.getRuns().forEach(function (run) { var u = run.getLinkUrl(); if (u) out.push({ url: u, label: run.getText().trim() }); });
+  return out;
+}
+
+/** Retours en attente + validés récents (le statut vient du Sheet : une validation faite dans le Sheet apparaît dans l'app). */
 function listPending_() {
   var sh = pendingSheet_();
   var last = sh.getLastRow();
   if (last < 2) return [];
-  var vals = sh.getRange(2, 1, last - 1, PENDING_HEADER.length).getValues();
+  var n = last - 1;
+  var vals = sh.getRange(2, 1, n, PENDING_HEADER.length).getValues();
+  var richP = sh.getRange(2, 7, n, 1).getRichTextValues();
+  var richD = sh.getRange(2, 8, n, 1).getRichTextValues();
+  var limit = Date.now() - 7 * 86400000;
   var out = [];
   vals.forEach(function (v, i) {
-    if (String(v[3]).trim().toLowerCase() !== 'en attente') return;
+    if (!String(v[1]).trim()) return;
+    var st = String(v[3]).trim();
+    var waiting = !/^valid/i.test(st);
+    var dv = v[4] instanceof Date ? v[4].getTime() : 0;
+    if (!waiting && dv && dv < limit) return;                 // validés : 7 derniers jours seulement
     out.push({
-      row: i + 2, pid: String(v[9]), docs: String(v[7] || '').split('📄').length - 1, date: v[0] instanceof Date ? Utilities.formatDate(v[0], TZ, 'yyyy-MM-dd') : String(v[0]),
-      livreur: String(v[1]), colis: Number(v[2]) || 0, note: String(v[5]), photos: String(v[6] || '').split('📷').length - 1
+      row: i + 2, pid: String(v[9]), statut: waiting ? 'En attente' : 'VALIDER',
+      date: v[0] instanceof Date ? Utilities.formatDate(v[0], TZ, 'yyyy-MM-dd') : String(v[0]),
+      dateValidation: v[4] instanceof Date ? Utilities.formatDate(v[4], TZ, 'yyyy-MM-dd') : '',
+      livreur: String(v[1]), colis: Number(v[2]) || 0, note: String(v[5]),
+      photoLinks: runsOf_(richP[i][0]).map(function (x) { return x.url; }),
+      docs: runsOf_(richD[i][0])
     });
   });
   return out.reverse();
@@ -475,11 +506,27 @@ function receivePending_(req) {
     var v = sh.getRange(r, 1, 1, PENDING_HEADER.length).getValues()[0];
     if (String(v[9]) !== String(req.pid || '')) throw new AppError('La feuille a changé. Actualisez la liste.', 'conflict');
     var dr = req.dateReception ? parseIsoDate_(req.dateReception, 'Date de réception') : new Date();
-    sh.getRange(r, 4, 1, 2).setValues([['Reçu', dr]]);
-    sh.getRange(r, 4).setBackground('#E7F7EE').setFontColor('#15803D');
+    sh.getRange(r, 4, 1, 2).setValues([['VALIDER', dr]]);
     sh.getRange(r, 5).setNumberFormat('dd/MM/yyyy');
     return { row: r };
   });
+}
+
+/** Déclencheur : quand on choisit VALIDER dans le Sheet, la date de validation se met toute seule. */
+function onPendingEdit(e) {
+  try {
+    var rg = e && e.range;
+    if (!rg || rg.getSheet().getName() !== PENDING_SHEET || rg.getColumn() !== 4 || rg.getRow() < 2) return;
+    var v = String(rg.getValue()).trim();
+    var cell = rg.offset(0, 1);
+    if (/^valid/i.test(v) && !cell.getValue()) cell.setValue(new Date()).setNumberFormat('dd/MM/yyyy');
+    if (/attente/i.test(v)) cell.clearContent();
+  } catch (err) {}
+}
+
+function installTrigger_() {
+  var exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'onPendingEdit'; });
+  if (!exists) ScriptApp.newTrigger('onPendingEdit').forSpreadsheet(SPREADSHEET_ID).onEdit().create();
 }
 
 /* ============================== 4) LECTURE D'ÉTIQUETTE (OCR Google Drive) ============================== */
@@ -542,6 +589,9 @@ function setup() {
   Logger.log('Onglet Gestion Roteur OK');
   pendingSheet_();
   Logger.log('Onglet Retours en attente OK');
+  pendingFormat_(pendingSheet_());
+  installTrigger_();
+  Logger.log('Validation depuis le Sheet OK');
   UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/about?fields=user', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } });
   Logger.log('Lecture d\'étiquettes (OCR) OK');
   Logger.log('Dossier photos : ' + photoFolder_().getUrl());

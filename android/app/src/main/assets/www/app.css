@@ -197,3 +197,14 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:38px;backgrou
 .doc{display:flex;align-items:center;background:var(--soft);border-radius:10px;padding:9px 10px;margin-top:6px;font-size:13.5px;font-weight:600}
 .doc span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:6px}
 .doc .x2{border:0;background:none;color:var(--muted);font-weight:900;font-size:15px;padding:0 4px}
+.pend{border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:10px}
+.pend-h{display:flex;align-items:flex-start}
+.pend-h .main{flex:1;min-width:0;margin-left:12px}
+.pthumbs{display:flex;flex-wrap:wrap;margin:10px -3px 0}
+.pthumbs a{width:62px;height:62px;border-radius:10px;overflow:hidden;background:var(--line);margin:3px}
+.pthumbs img{width:100%;height:100%;object-fit:cover;display:block}
+.pdocs{margin-top:8px}
+.pdoc{display:block;background:var(--soft);color:var(--accent);border-radius:10px;padding:9px 10px;margin-top:6px;font-size:13.5px;font-weight:700;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pend .btn-recv{margin-top:10px;padding:12px}
+.pvalid{margin-top:14px}
+.pvalid summary{cursor:pointer;font-weight:700;color:var(--accent);padding:6px 0}

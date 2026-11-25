@@ -1,5 +1,5 @@
 /* SONICOD – Bot Retours WhatsApp Web
- * Lit les photos d'étiquettes « BON RETOUR CLIENT » envoyées aujourd'hui dans les groupes retour,
+ * Lit les photos des colis, le bon PDF et les étiquettes « BON RETOUR CLIENT » envoyés le jour choisi dans les groupes retour,
  * récupère le nombre de colis (lecture d'image Google) et enregistre « En attente » dans le Google Sheet.
  */
 (function () {
@@ -56,13 +56,13 @@
     return dm === today || md !== today ? dm : md;
   }
 
-  /** Photos (blob) du chat ouvert, envoyées le jour choisi. */
-  function collectImages(dayIso) {
+  /** Photos (blob) et documents PDF du chat ouvert, envoyés le jour choisi. */
+  function collectDay(dayIso) {
     const today = isoOf(new Date());
     const yesterday = isoOf(new Date(Date.now() - 86400000));
     const rows = $$('#main [role="row"]');
     let current = null;
-    const out = [];
+    const imgs = [], docs = [];
     rows.forEach(row => {
       const msg = row.querySelector('[data-id]');
       if (!msg) { const txt = (row.innerText || '').trim(); if (txt && txt.length < 40) current = dividerDay(txt, today, yesterday); return; }
@@ -73,11 +73,34 @@
         if (!src.startsWith('blob:')) return;
         if ((img.naturalWidth || 0) < 120 || (img.naturalHeight || 0) < 120) return;
         if (img.closest('header')) return;
-        out.push(img);
+        imgs.push(img);
       });
+      // document PDF : un élément dont le texte se termine par .pdf
+      const nameEl = Array.from(row.querySelectorAll('span, div')).find(e => e.children.length === 0 && /\.pdf\s*$/i.test(e.textContent || ''));
+      if (nameEl) docs.push({ name: nameEl.textContent.trim(), el: nameEl });
     });
-    log('Lignes lues : ' + rows.length + ' · photos du ' + fmt(dayIso) + ' : ' + out.length);
-    return out;
+    log('Lignes lues : ' + rows.length + ' · ' + fmt(dayIso) + ' : ' + imgs.length + ' photo(s), ' + docs.length + ' PDF');
+    return { imgs, docs };
+  }
+
+  /** Récupère le contenu d'un PDF en cliquant dessus (capturé par hook.js, sans téléchargement). */
+  function capturePdf(el) {
+    return new Promise(resolve => {
+      let done = false;
+      const finish = v => { if (done) return; done = true; window.removeEventListener('message', onMsg); window.postMessage({ __snc: 'capture', on: false }, '*'); resolve(v); };
+      const onMsg = e => {
+        if (e.source !== window || !e.data || e.data.__snc !== 'blob') return;
+        const fr = new FileReader();
+        fr.onload = () => finish(String(fr.result).split(',')[1]);
+        fr.onerror = () => finish(null);
+        fr.readAsDataURL(e.data.blob);
+      };
+      window.addEventListener('message', onMsg);
+      window.postMessage({ __snc: 'capture', on: true }, '*');
+      const target = el.closest('[role="button"]') || el.closest('[data-id] div[tabindex]') || el;
+      fireClick(target);
+      setTimeout(() => finish(null), 12000);
+    });
   }
 
   function imgToB64(img) {
@@ -99,33 +122,47 @@
     return '';
   }
 
-  /** Analyse le chat ouvert : lecture de chaque photo du jour. */
+  /** Analyse le chat ouvert : photos du jour + bon PDF + nombre de colis (étiquettes). */
   async function analyseOpenChat(dayIso) {
     const group = chatName();
     if (!group) { log('Ouvrez d\'abord un groupe dans WhatsApp.'); return 0; }
     const groups = (await store.get('groups')) || {};
-    const imgs = collectImages(dayIso).slice(-30);
-    let found = 0;
-    for (let i = 0; i < imgs.length; i++) {
-      log(group + ' : lecture photo ' + (i + 1) + '/' + imgs.length + '…');
+    const { imgs, docs } = collectDay(dayIso);
+    if (!imgs.length && !docs.length) { log(group + ' : rien pour ce jour.'); return 0; }
+    const rec = { key: group + '|' + dayIso, group, day: dayIso, colis: null, brvs: {}, zone: '', photos: [], labels: [], docs: [], livreur: groups[group] || '', checked: true, status: '' };
+    results = results.filter(r => r.key !== rec.key);
+    results.push(rec);
+    // Photos : on garde tout (max 10) et on lit les étiquettes
+    for (let i = 0; i < imgs.length && i < 15; i++) {
+      log(group + ' : photo ' + (i + 1) + '/' + imgs.length + '…');
       let b64;
-      try { b64 = imgToB64(imgs[i]); } catch (e) { log('Photo illisible (' + e.message + ')'); continue; }
+      try { b64 = imgToB64(imgs[i]); } catch (e) { log('Photo illisible'); continue; }
       const r = await api({ action: 'ocrLabel', b64 });
-      if (!r.ok) { log('Erreur lecture : ' + r.error); if (r.network) break; continue; }
-      const d = r.data;
-      if (d.colis == null) continue;                    // pas une étiquette « BON RETOUR »
-      const key = d.brv || (group + '|' + (d.date || dayIso) + '|' + d.colis);
-      let it = results.find(x => x.key === key);
-      if (!it) {
-        it = { key, group, colis: d.colis, zone: d.zone, date: d.date || dayIso, brv: d.brv, parts: [], b64, thumb: 'data:image/jpeg;base64,' + b64, livreur: guessCity(group, d.zone, groups), checked: true, status: '' };
-        results.push(it); found++;
-      }
-      if (d.part && it.parts.indexOf(d.part) < 0) it.parts.push(d.part);
-      if (d.colis > it.colis) it.colis = d.colis;
+      const isLabel = r.ok && r.data.colis != null;
+      if (isLabel) {
+        const d = r.data, k = d.brv || ('n' + d.colis);
+        rec.brvs[k] = Math.max(rec.brvs[k] || 0, d.colis);
+        if (d.zone && !rec.zone) rec.zone = d.zone;
+        rec.labels.push(b64);
+      } else if (!r.ok && r.network) { log('Serveur injoignable'); break; }
+      if (rec.photos.length < 10) rec.photos.push(b64);
+      rec.colis = Object.keys(rec.brvs).length ? Object.values(rec.brvs).reduce((a, b) => a + b, 0) : null;
+      if (!rec.livreur) rec.livreur = guessCity(group, rec.zone, groups);
       renderResults();
     }
-    log(group + ' : ' + found + ' étiquette(s) trouvée(s).');
-    return found;
+    // Bon(s) PDF
+    for (const d of docs.slice(0, 3)) {
+      log(group + ' : lecture du bon ' + d.name + '…');
+      const b64 = await capturePdf(d.el);
+      if (b64) rec.docs.push({ name: d.name, b64 });
+      else log('PDF non récupéré : ' + d.name + ' (téléchargez-le une fois dans WhatsApp puis relancez)');
+      await wait(600);
+      const viewerClose = $('[data-icon="x-viewer"], [aria-label="Fermer"], [aria-label="Close"]');
+      if (viewerClose) fireClick(viewerClose.closest('[role="button"]') || viewerClose);
+      renderResults();
+    }
+    log(group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF, ' + (rec.colis == null ? 'colis à saisir' : rec.colis + ' colis') + '.');
+    return 1;
   }
 
   /* ---------------- ouvrir un groupe par son nom ---------------- */
@@ -226,15 +263,17 @@
     const box = $('#snc-res');
     if (!box) return;
     box.innerHTML = results.map((r, i) =>
-      '<div class="res"><img src="' + r.thumb + '"><div class="m">' +
-      '<div class="t"><input type="checkbox" data-ck="' + i + '"' + (r.checked ? ' checked' : '') + (r.status === 'ok' ? ' disabled' : '') + '> ' + esc(r.group) + '</div>' +
-      '<div class="s">' + esc(r.brv || 'sans n° BRV') + ' · ' + esc(r.zone || '') + ' · ' + fmt(r.date) + (r.parts.length ? ' · sacs ' + esc(r.parts.join(', ')) : '') + '</div>' +
-      '<div class="row" style="margin-top:6px"><input type="number" min="1" data-n="' + i + '" value="' + r.colis + '"> <select data-v="' + i + '">' +
+      '<div class="res"><div class="m">' +
+      '<div class="t"><input type="checkbox" data-ck="' + i + '"' + (r.checked ? ' checked' : '') + (r.status === 'ok' ? ' disabled' : '') + '> ' + esc(r.group) + ' · ' + fmt(r.day) + '</div>' +
+      '<div class="thumbs">' + r.photos.map(b => '<img src="data:image/jpeg;base64,' + b + '">').join('') + '</div>' +
+      '<div class="s">' + r.photos.length + ' photo(s)' + (r.docs.length ? ' · ' + r.docs.map(d => '📄 ' + esc(d.name)).join(', ') : ' · pas de PDF') +
+      (Object.keys(r.brvs).length ? ' · ' + Object.keys(r.brvs).length + ' étiquette(s)' : '') + (r.zone ? ' · ' + esc(r.zone) : '') + '</div>' +
+      '<div class="row" style="margin-top:6px"><input type="number" min="1" placeholder="Colis" data-n="' + i + '" value="' + (r.colis == null ? '' : r.colis) + '"> <select data-v="' + i + '">' +
       '<option value="">Ville ?</option>' + cities.map(c => '<option' + (c === r.livreur ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></div>' +
       (r.status ? '<div class="' + (r.status === 'ok' ? 'ok' : 'err') + '">' + esc(r.msg) + '</div>' : '') +
       '</div></div>').join('');
     $$('[data-ck]').forEach(c => c.onchange = () => { results[+c.dataset.ck].checked = c.checked; });
-    $$('[data-n]').forEach(c => c.oninput = () => { results[+c.dataset.n].colis = Number(c.value); });
+    $$('[data-n]').forEach(c => c.oninput = () => { results[+c.dataset.n].colis = c.value === '' ? null : Number(c.value); });
     $$('[data-v]').forEach(c => c.onchange = () => { results[+c.dataset.v].livreur = c.value; });
     const save = $('#snc-save');
     if (save) {
@@ -246,16 +285,18 @@
 
   async function saveAll() {
     const todo = results.filter(r => r.checked && r.status !== 'ok');
-    if (todo.some(r => !r.livreur)) { log('Choisissez la ville pour chaque étiquette.'); return; }
+    if (todo.some(r => !r.livreur)) { log('Choisissez la ville pour chaque groupe.'); return; }
+    if (todo.some(r => !(r.colis > 0))) { log('Indiquez le nombre de colis pour chaque groupe.'); return; }
     busy(true);
     for (const r of todo) {
-      const pid = 'wa-' + (r.brv ? r.brv.replace(/[^0-9]/g, '') : hash(r.key));
+      log('Envoi ' + r.group + '…');
       const res = await api({
-        action: 'addPending', pid, livreur: r.livreur, colis: r.colis, date: r.date, who: 'Bot WhatsApp',
-        note: r.group + (r.brv ? ' · ' + r.brv : '') + (r.parts.length ? ' · sacs ' + r.parts.join(', ') : ''),
-        photos: [{ b64: r.b64 }]
+        action: 'addPending', pid: 'wa-' + hash(r.key), livreur: r.livreur, colis: r.colis, date: r.day, who: 'Bot WhatsApp',
+        note: r.group + (Object.keys(r.brvs).filter(k => k.startsWith('BRV')).length ? ' · ' + Object.keys(r.brvs).filter(k => k.startsWith('BRV')).join(', ') : ''),
+        photos: r.photos.map(b64 => ({ b64 })),
+        files: r.docs.map(d => ({ b64: d.b64, name: d.name, mime: 'application/pdf' }))
       });
-      if (res.ok) { r.status = 'ok'; r.msg = res.data.duplicate ? '✓ Déjà enregistré' : '✓ Enregistré (ligne ' + res.data.row + ')'; }
+      if (res.ok) { r.status = 'ok'; r.msg = res.data.duplicate ? '✓ Déjà enregistré pour ce jour' : '✓ Enregistré « En attente » (ligne ' + res.data.row + ')'; }
       else { r.status = 'err'; r.msg = res.error || 'Erreur'; }
       renderResults();
     }

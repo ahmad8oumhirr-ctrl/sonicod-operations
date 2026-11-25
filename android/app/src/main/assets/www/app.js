@@ -689,7 +689,7 @@
       '<div class="photos" id="pPhotos"></div>' +
       ((o.files || []).length ? '<div class="docs">' + o.files.map(function (f, i) { return '<div class="doc">📄 <span>' + esc(f.name) + '</span><button type="button" class="x2" data-doc="' + i + '">✕</button></div>'; }).join('') + '</div>' : '') +
       '<button class="btn btn-primary" id="pSave" style="margin-top:14px">' + ic('clock') + 'Enregistrer « En attente »</button></div>' +
-      '<div class="card"><div class="sec"><b>Retours en attente</b><small><button class="btn btn-ghost btn-sm" id="pReload">' + ic('sync') + 'Actualiser</button></small></div>' +
+      '<div class="card"><div class="sec"><b>Retours des groupes</b><small><button class="btn btn-ghost btn-sm" id="pReload">' + ic('sync') + 'Actualiser</button></small></div>' +
       '<div class="list" id="pList">' + pendListHtml() + '</div></div>'
     );
     var redraw = function () { renderPhotoGrid(o.photos, '#pPhotos', '#none', savePend); };
@@ -719,34 +719,63 @@
     loadPending(false);
   };
 
+  function driveId(url) { var m = /[-\w]{25,}/.exec(String(url || '')); return m ? m[0] : ''; }
+  function pendItemHtml(p, i) {
+    var waiting = p.statut !== 'VALIDER';
+    var thumbs = (p.photoLinks || []).slice(0, 6).map(function (u) {
+      return '<a href="#" class="pth" data-url="' + esc(u) + '"><img loading="lazy" src="https://drive.google.com/thumbnail?id=' + encodeURIComponent(driveId(u)) + '&sz=w200" alt=""></a>';
+    }).join('');
+    var docs = (p.docs || []).map(function (d) {
+      return '<a href="#" class="pdoc" data-url="' + esc(d.url) + '">📄 ' + esc(String(d.label || 'Bon PDF').replace(/^📄\s*/, '')) + '</a>';
+    }).join('');
+    return '<div class="pend">' +
+      '<div class="pend-h"><div class="av">' + esc(initials(p.livreur)) + '</div><div class="main"><div class="t1">' + esc(p.livreur) +
+      ' <span class="badge ' + (waiting ? 'b-wait' : 'b-ok') + '">' + (waiting ? 'En attente' : 'VALIDER') + '</span></div>' +
+      '<div class="t2">' + (p.colis || '?') + ' colis · ' + esc(fmtDate(p.date)) + (p.dateValidation ? ' · validé le ' + esc(fmtDate(p.dateValidation)) : '') + '</div>' +
+      (p.note ? '<div class="t2">' + esc(p.note) + '</div>' : '') + '</div></div>' +
+      (thumbs ? '<div class="pthumbs">' + thumbs + '</div>' : '') +
+      (docs ? '<div class="pdocs">' + docs + '</div>' : '') +
+      (waiting ? '<button class="btn btn-recv" data-recv="' + i + '">' + ic('check') + 'VALIDER</button>' : '') +
+      '</div>';
+  }
   function pendListHtml() {
     var l = state.pendList || [];
-    if (!l.length) return '<div class="empty">Aucun retour en attente</div>';
-    return l.map(function (p, i) {
-      return '<div class="item pend-item"><div class="av">' + esc(initials(p.livreur)) + '</div><div class="main">' +
-        '<div class="t1">' + esc(p.livreur) + ' <span class="badge b-wait">' + p.colis + ' colis</span></div>' +
-        '<div class="t2">' + esc(fmtDate(p.date)) + (p.photos ? ' · 📷 ' + p.photos : '') + (p.docs ? ' · 📄 ' + p.docs : '') + (p.note ? ' · ' + esc(p.note) : '') + '</div></div>' +
-        '<button class="btn btn-recv btn-sm" data-recv="' + i + '">' + ic('check') + 'Reçu</button></div>';
-    }).join('');
+    var w = l.filter(function (p) { return p.statut !== 'VALIDER'; });
+    var v = l.filter(function (p) { return p.statut === 'VALIDER'; });
+    var html = w.length ? w.map(function (p) { return pendItemHtml(p, l.indexOf(p)); }).join('') : '<div class="empty">Aucun retour en attente ✓</div>';
+    if (v.length) html += '<details class="pvalid"><summary>Validés (7 derniers jours) · ' + v.length + '</summary>' + v.map(function (p) { return pendItemHtml(p, l.indexOf(p)); }).join('') + '</details>';
+    return html;
   }
   function bindPendList() {
+    $$('.pth, .pdoc').forEach(function (a) {
+      a.onclick = function (e) { e.preventDefault(); var u = a.getAttribute('data-url'); if (NATIVE) NATIVE.openUrl(u); else window.open(u); };
+    });
     $$('[data-recv]').forEach(function (b) {
       b.onclick = function () {
         var p = state.pendList[Number(b.getAttribute('data-recv'))];
         if (!p) return;
-        confirmBox('Retour reçu ?', p.livreur + ' · ' + p.colis + ' colis (annoncé le ' + fmtDate(p.date) + '). Il passera à « Reçu » et la Nouvelle opération sera pré-remplie.', 'Oui, reçu').then(function (ok) {
-          if (!ok) return;
+        var sh = openSheet('<h2>Valider ce retour ?</h2><p class="muted">' + esc(p.livreur) + ' · ' + p.colis + ' colis · ' + esc(fmtDate(p.date)) + '</p>' +
+          '<button class="btn btn-recv" id="vOk">' + ic('check') + 'VALIDER</button>' +
+          '<button class="btn btn-primary" id="vOp">' + ic('box') + 'VALIDER + Nouvelle opération</button>' +
+          '<button class="btn btn-outline" id="vNo">Annuler</button>');
+        var run = function (withOp) {
+          closeSheet();
           b.disabled = true;
           api('receivePending', { row: p.row, pid: p.pid, dateReception: todayIso() }).then(function (r) {
             if (!r.ok) { b.disabled = false; toast(r.error || 'Erreur', 'err'); if (r.code === 'conflict') loadPending(true); return; }
-            state.pendList = state.pendList.filter(function (x) { return x !== p; }); store('pendList', state.pendList);
-            state.draft = newDraft();
-            state.draft.livreur = p.livreur; state.draft.colis = String(p.colis);
-            state.draft.dateEnvoi = p.date <= todayIso() ? p.date : ''; state.draft.note = p.note || '';
-            go('op');
-            toast('Complétez le statut puis ENVOYER', 'ok');
+            p.statut = 'VALIDER'; p.dateValidation = todayIso(); store('pendList', state.pendList);
+            toast('✓ ' + p.livreur + ' validé', 'ok');
+            if (withOp) {
+              state.draft = newDraft();
+              state.draft.livreur = p.livreur; state.draft.colis = String(p.colis);
+              state.draft.dateEnvoi = p.date <= todayIso() ? p.date : ''; state.draft.note = p.note || '';
+              go('op');
+            } else render();
           });
-        });
+        };
+        $('#vOk', sh).onclick = function () { run(false); };
+        $('#vOp', sh).onclick = function () { run(true); };
+        $('#vNo', sh).onclick = closeSheet;
       };
     });
   }
@@ -776,7 +805,7 @@
       b.disabled = false; b.innerHTML = ic('clock') + 'Enregistrer « En attente »';
       if (!r.ok) { toast(r.error || 'Erreur', 'err'); return; }
       toast('✓ ' + o.livreur + ' · ' + o.colis + ' colis en attente' + (docs.length ? ' + bon PDF' : ''), 'ok');
-      state.pendList.unshift({ row: r.data.row, pid: o.pid, livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim(), photos: ids.length, docs: docs.length });
+      state.pendList.unshift({ row: r.data.row, pid: o.pid, statut: 'En attente', livreur: o.livreur, colis: Number(o.colis), date: o.date, note: o.note.trim(), photoLinks: [], docs: [] });
       store('pendList', state.pendList);
       state.pend = newPend(); savePend();
       render();
