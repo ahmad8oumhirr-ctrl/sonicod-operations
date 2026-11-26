@@ -345,9 +345,10 @@
       while (idx < rec.raw.length && !offline) {
         const { b64, ph } = rec.raw[idx++];
         let d = cache[ph];
+        if (d && d.v !== 2) d = null;          // ancienne lecture sans « commande » : on relit
         if (!d) {
           const r = await api({ action: 'ocrLabel', b64 });
-          if (r.ok) { d = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone, label: r.data.label, tracks: r.data.tracks || [] }; fresh[ph] = d; }
+          if (r.ok) { d = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone, label: r.data.label, tracks: r.data.tracks || [], ticket: !!r.data.ticket, v: 2 }; fresh[ph] = d; }
           else if (r.network) { offline = true; log('Serveur injoignable'); }
         }
         reads.push(d || null);
@@ -363,9 +364,9 @@
     }
     delete rec.raw;
     const c = countColis(reads, rec.nPhotos);
-    rec.colis = c.colis; rec.source = c.source; rec.brvs = c.brvs;
+    rec.colis = c.colis; rec.commandes = c.commandes; rec.source = c.source; rec.brvs = c.brvs;
     if (!rec.livreur) rec.livreur = guessCity(rec.group, rec.zone, (await store.get('groups')) || {});
-    log(rec.group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF, ' + (rec.colis == null ? 'colis non lus' : rec.colis + ' colis') + '.');
+    log(rec.group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF → ' + rec.source + '.');
     await sendRecord(rec);                      // envoi automatique au Google Sheet
     return rec;
   }
@@ -377,19 +378,25 @@
    *  2) étiquette présente mais illisible → vide (« à vérifier ») plutôt qu'un chiffre faux ;
    *  3) sinon 1 photo = 1 colis, et le même n° de suivi sur 2 photos = 1 seul colis.
    */
+  /**
+   * Colis et commandes du groupe pour le jour :
+   *  - COLIS = gros colis (sacs noirs) : 1 photo = 1 colis ;
+   *  - COMMANDES = petits colis avec ticket (n° de suivi N…, SONICOD, prix DH) : le même n° sur 2 photos = 1 commande ;
+   *  - l'étiquette « BON RETOUR » ne compte pas (son nombre est gardé dans la note).
+   */
   function countColis(reads, nPhotos) {
-    // Règle SONICOD : 1 photo = 1 colis (la même photo / le même n° de suivi sur 2 photos ne compte qu'une fois).
-    // Le nombre écrit sur l'étiquette « BON RETOUR » est gardé en information dans la note.
     const brvs = {}, tracks = {};
-    let withTrack = 0;
+    let labels = 0, tickets = 0, ticketsNoTrack = 0, read = 0;
     reads.forEach(d => {
       if (!d) return;
-      if (d.label !== false && d.colis != null) { const k = d.brv || ('n' + d.colis); brvs[k] = Math.max(brvs[k] || 0, d.colis); }
-      if (d.tracks && d.tracks.length) { withTrack++; d.tracks.forEach(t => { tracks[t] = 1; }); }
+      read++;
+      if (d.label) { labels++; if (d.colis != null) { const k = d.brv || ('n' + d.colis); brvs[k] = Math.max(brvs[k] || 0, d.colis); } return; }
+      if (d.ticket || (d.tracks && d.tracks.length)) { tickets++; if (d.tracks && d.tracks.length) d.tracks.forEach(t => { tracks[t] = 1; }); else ticketsNoTrack++; }
     });
-    const n = Object.keys(tracks).length + Math.max(0, nPhotos - withTrack);
+    const commandes = Object.keys(tracks).length + ticketsNoTrack;
+    const colis = Math.max(0, nPhotos - labels - tickets);
     const lab = Object.keys(brvs).length ? Object.values(brvs).reduce((a, b) => a + b, 0) : null;
-    return { colis: n || null, source: n + ' photo(s)' + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
+    return { colis, commandes, source: colis + ' colis (sacs) · ' + commandes + ' commande(s)' + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
   }
 
   /** Lire le groupe ouvert. */
@@ -625,11 +632,11 @@
       if (done.p.indexOf(id) < 0 && done.p.indexOf(r.photoHashes[i]) < 0) { photos.push({ b64, id }); ph.push(id); }
     });
     const files = r.docs.filter(d => done.d.indexOf(d.name) < 0).map(d => ({ b64: d.b64, name: d.name, mime: 'application/pdf' }));
-    if (done.c === r.colis && !photos.length && !files.length && done.l === r.livreur) { r.status = 'ok'; r.msg = '✓ Déjà à jour dans le Sheet'; renderResults(); return; }
+    if (done.c === r.colis && done.k === r.commandes && !photos.length && !files.length && done.l === r.livreur) { r.status = 'ok'; r.msg = '✓ Déjà à jour dans le Sheet'; renderResults(); return; }
     log('Envoi ' + r.group + ' au Sheet…');
     const brv = Object.keys(r.brvs).filter(k => k.startsWith('BRV'));
     const res = await api({
-      action: 'addPending', pid, livreur: r.livreur, colis: r.colis || '', date: r.day, who: 'Bot WhatsApp',
+      action: 'addPending', pid, livreur: r.livreur, colis: r.colis == null ? '' : r.colis, commandes: r.commandes == null ? '' : r.commandes, date: r.day, who: 'Bot WhatsApp',
       note: r.group + (r.source ? ' · ' + r.source : '') + (brv.length ? ' · ' + brv.join(', ') : ''), photos, files
     });
     if (res.ok) {
@@ -637,7 +644,7 @@
         const cur = all[pid] || { p: [], d: [], c: null };
         cur.p = cur.p.concat(ph.filter(x => cur.p.indexOf(x) < 0));
         cur.d = cur.d.concat(files.map(f => f.name).filter(x => cur.d.indexOf(x) < 0));
-        cur.c = r.colis; cur.l = r.livreur;
+        cur.c = r.colis; cur.k = r.commandes; cur.l = r.livreur;
         delete all[pid]; all[pid] = cur;                     // le plus récent à la fin
         const keys = Object.keys(all); if (keys.length > 300) keys.slice(0, keys.length - 250).forEach(k => delete all[k]);
       });

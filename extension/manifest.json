@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SONICOD – Bot Retours WhatsApp",
-  "version": "2.10",
+  "version": "2.11",
   "description": "Lit les étiquettes « BON RETOUR » des groupes WhatsApp Web et enregistre les colis du jour dans « Retours en attente ».",
   "icons": {
     "16": "icon16.png",

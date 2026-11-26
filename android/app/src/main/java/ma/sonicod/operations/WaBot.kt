@@ -300,7 +300,7 @@ object WaBot {
 
     /* ---------------- lecture d'étiquette ---------------- */
 
-    data class Label(val colis: Int?, val brv: String, val zone: String, val label: Boolean = false, val tracks: List<String> = emptyList())
+    data class Label(val colis: Int?, val brv: String, val zone: String, val label: Boolean = false, val tracks: List<String> = emptyList(), val ticket: Boolean = false)
 
     fun parseLabel(text: String): Label {
         val flat = text.replace(Regex("\\s+"), " ")
@@ -325,7 +325,9 @@ object WaBot {
         val tracks = Regex("\\b[A-Z]{1,3}\\d{8,12}\\b").findAll(flat.uppercase(Locale.ROOT)).map { it.value }
             .filter { !Regex("^[BG8]R[VY]").containsMatchIn(it) }.distinct().take(20).toList()
         val c = colis
-        return Label(if (isLabel && c != null && c > 0) c else null, brv, zone, isLabel, tracks)
+        // ticket de COMMANDE (petit colis) : n° de suivi, « SONICOD » hors bon de retour, prix en DH
+        val ticket = !isLabel && (tracks.isNotEmpty() || flat.contains("SONICOD", true) || Regex("\\b\\d{2,5}(?:[.,]\\d{1,2})?\\s*DH\\b", RegexOption.IGNORE_CASE).containsMatchIn(flat))
+        return Label(if (isLabel && c != null && c > 0) c else null, brv, zone, isLabel, tracks, ticket)
     }
 
     /** Lit le texte d'une photo sur le téléphone (ML Kit), sinon via le serveur Google. */
@@ -340,8 +342,17 @@ object WaBot {
             val bmp = opener()?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = s }) } ?: return null
             val rec = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             try {
-                val text = Tasks.await(rec.process(InputImage.fromBitmap(bmp, 0)), 40, TimeUnit.SECONDS).text
-                return parseLabel(text)
+                val img = InputImage.fromBitmap(bmp, 0)
+                val text = Tasks.await(rec.process(img), 40, TimeUnit.SECONDS).text
+                val lab = parseLabel(text)
+                if (lab.label || lab.ticket) return lab
+                // code-barres / QR visible et pas un bon de retour → ticket de commande
+                val bc = com.google.mlkit.vision.barcode.BarcodeScanning.getClient()
+                return try {
+                    val codes = Tasks.await(bc.process(img), 20, TimeUnit.SECONDS)
+                    val tr = codes.mapNotNull { it.rawValue?.trim() }.filter { Regex("^[A-Z]{1,3}\\d{8,12}$").matches(it) }
+                    if (codes.isNotEmpty()) lab.copy(ticket = true, tracks = (lab.tracks + tr).distinct()) else lab
+                } catch (e: Exception) { lab } finally { bc.close() }
             } finally {
                 rec.close(); bmp.recycle()
             }
@@ -359,28 +370,25 @@ object WaBot {
         } catch (e: Exception) { null }
     }
 
-    data class Count(val colis: Int?, val source: String, val brvs: Map<String, Int>)
+    data class Count(val colis: Int?, val source: String, val brvs: Map<String, Int>, val commandes: Int = 0)
 
     /**
-     * Nombre de colis (mêmes règles que le bot Chrome) :
-     *  1) étiquette « BON RETOUR » : la même étiquette sur plusieurs photos compte une fois ;
-     *  2) étiquette illisible → vide (« à vérifier ») ;
-     *  3) sinon 1 photo = 1 colis, et le même n° de suivi sur 2 photos = 1 colis.
+     * COLIS = gros colis (sacs noirs) : 1 photo = 1 colis ; COMMANDES = petits colis avec ticket (le même n° = 1 commande) ;
+     * l'étiquette « BON RETOUR » ne compte pas (son nombre est gardé dans la note).
      */
     fun countColis(reads: List<Label?>, nPhotos: Int): Count {
-        // Règle SONICOD : 1 photo = 1 colis (le même n° de suivi sur 2 photos ne compte qu'une fois) ;
-        // le nombre écrit sur l'étiquette « BON RETOUR » est gardé en information dans la note.
         val brvs = LinkedHashMap<String, Int>()
         val tracks = HashSet<String>()
-        var withTrack = 0
+        var labels = 0; var tickets = 0; var noTrack = 0
         for (d in reads) {
             if (d == null) continue
-            if (d.label && d.colis != null) { val k = d.brv.ifEmpty { "n" + d.colis }; brvs[k] = maxOf(brvs[k] ?: 0, d.colis) }
-            if (d.tracks.isNotEmpty()) { withTrack++; tracks.addAll(d.tracks) }
+            if (d.label) { labels++; if (d.colis != null) { val k = d.brv.ifEmpty { "n" + d.colis }; brvs[k] = maxOf(brvs[k] ?: 0, d.colis) }; continue }
+            if (d.ticket || d.tracks.isNotEmpty()) { tickets++; if (d.tracks.isNotEmpty()) tracks.addAll(d.tracks) else noTrack++ }
         }
-        val n = tracks.size + maxOf(0, nPhotos - withTrack)
+        val commandes = tracks.size + noTrack
+        val colis = maxOf(0, nPhotos - labels - tickets)
         val lab = if (brvs.isEmpty()) null else brvs.values.sum()
-        return Count(if (n > 0) n else null, "$n photo(s)" + (if (lab != null) " · étiquette : $lab" else ""), brvs)
+        return Count(colis, "$colis colis (sacs) · $commandes commande(s)" + (if (lab != null) " · étiquette : $lab" else ""), brvs, commandes)
     }
 
     /** Même identifiant que le bot Chrome (« wa- » + hash de « groupe|jour ») : une seule ligne par groupe et par jour. */
@@ -473,11 +481,11 @@ object WaBot {
         val reads = ArrayList<Label?>()
         for (i in 0 until imgs.length()) {
             val path = imgs.getString(i)
-            val cached = ocr.optJSONObject(path)
+            val cached = ocr.optJSONObject(path)?.takeIf { it.optInt("v") == 2 }
             val lab = if (cached != null) Label(cached.optInt("c", 0).takeIf { it > 0 }, cached.optString("b"), "", cached.optBoolean("l"),
-                cached.optJSONArray("t")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList())
+                cached.optJSONArray("t")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(), cached.optBoolean("k"))
             else (readLabelFrom(ctx) { open(ctx, path) } ?: Label(null, "", "")).also {
-                newOcr.put(path, JSONObject().put("c", it.colis ?: 0).put("b", it.brv).put("l", it.label).put("t", JSONArray(it.tracks)))
+                newOcr.put(path, JSONObject().put("c", it.colis ?: 0).put("b", it.brv).put("l", it.label).put("t", JSONArray(it.tracks)).put("k", it.ticket).put("v", 2))
             }
             reads.add(lab)
         }
@@ -486,13 +494,14 @@ object WaBot {
         val colis = cnt.colis
         val source = cnt.source
         val brvs = cnt.brvs
+        val commandes = cnt.commandes
 
         val names = r.optJSONObject("names") ?: JSONObject()
         val nameOf = { u: String -> names.optString(u).ifEmpty { android.net.Uri.decode(u).substringAfterLast('/') } }
         val newImgs = (0 until imgs.length()).map { imgs.getString(it) }.filter { it !in doneSet }
         val dl = r.getJSONArray("doc")
         val newDocs = (0 until dl.length()).map { dl.getString(it) }.filter { it !in doneSet }
-        val sameColis = (done.opt("c") as? Int ?: 0) == (colis ?: 0) && done.has("c")
+        val sameColis = (done.opt("c") as? Int ?: 0) == (colis ?: 0) && done.has("c") && done.optInt("k", -1) == commandes
         if (newImgs.isEmpty() && newDocs.isEmpty() && sameColis && done.optString("l") == ville) return false
 
         log(ctx, "→ $group ($day) : " + newImgs.size + " photo(s), " + newDocs.size + " PDF, " + (colis?.let { "$it colis lus" } ?: "colis non lus"))
@@ -517,7 +526,7 @@ object WaBot {
                     .put("mime", if (nm.endsWith(".pdf", true)) "application/pdf" else "application/octet-stream"))
             }
             val req = JSONObject().put("action", "addPending").put("key", APP_KEY).put("pid", pid).put("livreur", ville)
-                .put("colis", colis ?: "").put("date", day).put("who", "Bot téléphone").put("note", note)
+                .put("colis", colis ?: "").put("commandes", commandes).put("date", day).put("who", "Bot téléphone").put("note", note)
                 .put("photos", photos).put("files", files)
             val resp = try { Api.post(Session.serverUrl(ctx), req.toString()) } finally { tmp.forEach { PhotoStore.delete(ctx, it) } }
             if (!resp.optBoolean("ok")) throw Exception(resp.optString("error", "Erreur serveur"))
@@ -528,11 +537,11 @@ object WaBot {
                 val s = o.obj("sent").obj(pid)
                 val p = s.arr("p"); chunk.forEach { p.put(it) }
                 if (idx == 0) { val d = s.arr("d"); newDocs.forEach { d.put(it) } }
-                s.put("c", colis ?: 0).put("l", ville)
+                s.put("c", colis ?: 0).put("k", commandes).put("l", ville)
                 val all = o.obj("sent"); while (all.length() > 200) all.remove(all.keys().next())
             }
         }
-        log(ctx, "✓ $group → $ville " + (colis?.let { "$it colis" } ?: "colis ?") + " · +" + newImgs.size + " photo(s) · +" + newDocs.size + " PDF (ligne $lastRow)")
+        log(ctx, "✓ $group → $ville $colis colis · $commandes commande(s)" + " · +" + newImgs.size + " photo(s) · +" + newDocs.size + " PDF (ligne $lastRow)")
         return true
     }
 }

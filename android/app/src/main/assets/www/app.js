@@ -742,7 +742,7 @@
     return '<div class="pend" data-pi="' + i + '">' +
       '<div class="pend-h"><div class="av">' + esc(initials(p.livreur)) + '</div><div class="main"><div class="t1">' + esc(p.livreur) +
       ' <span class="badge ' + (waiting ? 'b-wait' : 'b-ok') + '">' + (waiting ? 'En attente' : 'VALIDER') + '</span></div>' +
-      '<div class="t2">' + (p.colis || '?') + ' colis · ' + esc(fmtDate(p.date)) + (p.dateValidation ? ' · validé le ' + esc(fmtDate(p.dateValidation)) : '') + '</div>' +
+      '<div class="t2">' + (p.colis == null ? '?' : p.colis) + ' colis' + (p.commandes != null ? ' · ' + p.commandes + ' commande(s)' : '') + ' · ' + esc(fmtDate(p.date)) + (p.dateValidation ? ' · validé le ' + esc(fmtDate(p.dateValidation)) : '') + '</div>' +
       '<div>' + retardHtml(p) + '</div>' +
       (p.note ? '<div class="t2">' + esc(p.note) + '</div>' : '') + '</div></div>' +
       (thumbs ? '<div class="pthumbs">' + thumbs + '</div>' : '') +
@@ -1038,6 +1038,7 @@
         sh.ocr = r.colis ? 'ok' : 'none';
         if (r.colis && !sh.colis) sh.colis = String(r.colis);
         sh.ocrColis = r.colis ? String(r.colis) : '';
+        sh.commandes = r.commandes == null ? '' : r.commandes;
         sh.brvs = r.brvs || []; sh.source = r.source || '';
         if (state.route === 'partage' && state.share === sh) render();
       });
@@ -1048,7 +1049,7 @@
       var b = this; b.disabled = true; b.innerHTML = '<i class="spin"></i> Envoi au Sheet…';
       var pid = 'wa-' + jhash((sh.group || sh.livreur) + '|' + sh.date);
       var note = (sh.group || 'Partage WhatsApp') + (sh.source && String(sh.colis) === String(sh.ocrColis) ? ' · ' + sh.source : '') + (sh.brvs && sh.brvs.length ? ' · ' + sh.brvs.join(', ') : '');
-      nat('apiWithPhotos', JSON.stringify({ action: 'addPending', pid: pid, livreur: sh.livreur, colis: sh.colis || '', date: sh.date, note: note }),
+      nat('apiWithPhotos', JSON.stringify({ action: 'addPending', pid: pid, livreur: sh.livreur, colis: sh.colis === '' ? '' : sh.colis, commandes: sh.commandes === undefined ? '' : sh.commandes, date: sh.date, note: note }),
         JSON.stringify(sh.photos.map(function (p) { return p.id; })), JSON.stringify(sh.files)).then(function (r) {
         if (!r.ok) { b.disabled = false; b.innerHTML = ic('check') + 'Envoyer dans « En attente »'; toast(r.error || 'Erreur', 'err'); return; }
         sh.photos.forEach(function (p) { NATIVE.deletePhoto(p.id); });
