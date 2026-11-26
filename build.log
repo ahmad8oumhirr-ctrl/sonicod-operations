@@ -1,0 +1,156 @@
+ANDROID_HOME=/usr/local/lib/android/sdk
+openjdk version "17.0.21.1" 2026-11-17
+OpenJDK Runtime Environment Temurin-17.0.21.1+2 (build 17.0.21.1+2)
+OpenJDK 64-Bit Server VM Temurin-17.0.21.1+2 (build 17.0.21.1+2, mixed mode, sharing)
+android-34
+android-34-ext10
+android-34-ext11
+android-34-ext12
+android-34-ext8
+android-35
+android-35-ext14
+android-35-ext15
+android-36
+android-36-ext18
+android-36-ext19
+android-36.1
+android-37.0
+android-37.1
+android-37.2
+android-37.2-beta1
+android-37.2-beta2
+android-37.2-beta3
+Downloading https://services.gradle.org/distributions/gradle-8.9-bin.zip
+............10%.............20%.............30%.............40%.............50%.............60%.............70%.............80%.............90%.............100%
+
+Welcome to Gradle 8.9!
+
+Here are the highlights of this release:
+ - Enhanced Error and Warning Messages
+ - IDE Integration Improvements
+ - Daemon JVM Information
+
+For more details see https://docs.gradle.org/8.9/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.9/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preStaffReleaseBuild UP-TO-DATE
+> Task :app:mergeStaffReleaseJniLibFolders
+> Task :app:mergeStaffReleaseNativeLibs
+> Task :app:checkStaffReleaseDuplicateClasses
+
+> Task :app:stripStaffReleaseDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libbarhopper_v3.so, libimage_processing_util_jni.so.
+
+> Task :app:buildKotlinToolingMetadata
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:extractStaffReleaseNativeSymbolTables
+> Task :app:generateStaffReleaseBuildConfig
+> Task :app:mergeStaffReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:generateStaffReleaseResValues
+> Task :app:checkStaffReleaseAarMetadata
+> Task :app:mapStaffReleaseSourceSetPaths
+> Task :app:generateStaffReleaseResources
+> Task :app:packageStaffReleaseResources
+> Task :app:mergeStaffReleaseResources
+> Task :app:createStaffReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksStaffRelease
+> Task :app:parseStaffReleaseLocalResources
+> Task :app:processStaffReleaseMainManifest
+> Task :app:processStaffReleaseManifest
+> Task :app:javaPreCompileStaffRelease
+> Task :app:desugarStaffReleaseFileDependencies
+> Task :app:mergeStaffReleaseStartupProfile
+> Task :app:mergeStaffReleaseArtProfile
+> Task :app:mergeStaffReleaseShaders
+> Task :app:compileStaffReleaseShaders NO-SOURCE
+> Task :app:generateStaffReleaseAssets UP-TO-DATE
+> Task :app:mergeStaffReleaseAssets
+> Task :app:compressStaffReleaseAssets
+> Task :app:extractStaffReleaseVersionControlInfo
+> Task :app:processStaffReleaseManifestForPackage
+> Task :app:collectStaffReleaseDependencies
+> Task :app:sdkStaffReleaseDependencyData
+> Task :app:validateSigningStaffRelease
+> Task :app:writeStaffReleaseAppMetadata
+> Task :app:writeStaffReleaseSigningConfigVersions
+> Task :app:preBotReleaseBuild UP-TO-DATE
+> Task :app:mergeBotReleaseJniLibFolders
+> Task :app:mergeBotReleaseArtProfile
+> Task :app:processStaffReleaseResources
+> Task :app:mergeBotReleaseNativeLibs
+> Task :app:desugarBotReleaseFileDependencies
+> Task :app:mergeExtDexStaffRelease
+> Task :app:generateBotReleaseBuildConfig
+> Task :app:checkBotReleaseAarMetadata
+> Task :app:generateBotReleaseResValues
+> Task :app:mapBotReleaseSourceSetPaths
+> Task :app:generateBotReleaseResources
+
+> Task :app:stripBotReleaseDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libbarhopper_v3.so, libimage_processing_util_jni.so.
+
+> Task :app:optimizeStaffReleaseResources
+> Task :app:packageBotReleaseResources
+> Task :app:extractBotReleaseNativeSymbolTables
+> Task :app:mergeBotReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:createBotReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksBotRelease
+> Task :app:parseBotReleaseLocalResources
+> Task :app:processBotReleaseMainManifest
+> Task :app:processBotReleaseManifest
+> Task :app:processBotReleaseManifestForPackage
+> Task :app:javaPreCompileBotRelease
+> Task :app:mergeBotReleaseStartupProfile
+> Task :app:mergeBotReleaseShaders
+> Task :app:checkBotReleaseDuplicateClasses
+> Task :app:compileBotReleaseShaders NO-SOURCE
+> Task :app:generateBotReleaseAssets UP-TO-DATE
+> Task :app:mergeBotReleaseAssets
+> Task :app:compressBotReleaseAssets
+> Task :app:extractBotReleaseVersionControlInfo
+> Task :app:mergeBotReleaseResources
+> Task :app:collectBotReleaseDependencies
+> Task :app:sdkBotReleaseDependencyData
+> Task :app:validateSigningBotRelease
+> Task :app:writeBotReleaseAppMetadata
+> Task :app:writeBotReleaseSigningConfigVersions
+> Task :app:processBotReleaseResources
+> Task :app:mergeExtDexBotRelease
+> Task :app:optimizeBotReleaseResources
+> Task :app:compileStaffReleaseKotlin
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/MainActivity.kt:386:46 'VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/ScanActivity.kt:105:22 'setTargetResolution(Size): ImageAnalysis.Builder' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/WaBot.kt:248:22 'getParcelableArray(String?): Array<(out) Parcelable!>?' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/WaBot.kt:252:71 'getParcelable(String?): T?' is deprecated. Deprecated in Java
+
+> Task :app:compileBotReleaseKotlin
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/MainActivity.kt:386:46 'VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/ScanActivity.kt:105:22 'setTargetResolution(Size): ImageAnalysis.Builder' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/WaBot.kt:248:22 'getParcelableArray(String?): Array<(out) Parcelable!>?' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/WaBot.kt:252:71 'getParcelable(String?): T?' is deprecated. Deprecated in Java
+
+> Task :app:compileBotReleaseJavaWithJavac
+> Task :app:compileStaffReleaseJavaWithJavac
+> Task :app:dexBuilderStaffRelease
+> Task :app:mergeStaffReleaseGlobalSynthetics
+> Task :app:processStaffReleaseJavaRes
+> Task :app:dexBuilderBotRelease
+> Task :app:mergeBotReleaseGlobalSynthetics
+> Task :app:processBotReleaseJavaRes
+> Task :app:mergeStaffReleaseJavaResource
+> Task :app:mergeDexStaffRelease
+> Task :app:compileStaffReleaseArtProfile
+> Task :app:mergeBotReleaseJavaResource
+> Task :app:mergeDexBotRelease
+> Task :app:compileBotReleaseArtProfile
+> Task :app:packageStaffRelease
+> Task :app:createStaffReleaseApkListingFileRedirect
+> Task :app:assembleStaffRelease
+> Task :app:packageBotRelease
+> Task :app:createBotReleaseApkListingFileRedirect
+> Task :app:assembleBotRelease
+
+BUILD SUCCESSFUL in 2m 26s
+90 actionable tasks: 90 executed
