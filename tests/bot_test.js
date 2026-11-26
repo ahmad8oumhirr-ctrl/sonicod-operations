@@ -25,9 +25,9 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   let st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('statut:', { notif: st.notif, files: st.files, dossierWhatsApp: st.whatsappFolder });
 
-  const D = '/sdcard/Android/data/' + P + '/files/wa-test/Media';   // en test : dossier de l'app (en vrai : dossier choisi par l'utilisateur)
-  sh(`adb shell "mkdir -p '${D}/WhatsApp Business Images' '${D}/WhatsApp Business Documents'"`);
-  log('dossier créé:', sh(`adb shell "ls '${D}'"`));
+  const D = 'files/wa-test/Media';   // en test : dossier privé de l'app (en vrai : dossier WhatsApp choisi par l'utilisateur)
+  const RA = c => sh(`adb shell "run-as ${P} sh -c '${c}'"`);
+  log('dossier créé:', RA(`mkdir -p "${D}/WhatsApp Business Images" "${D}/WhatsApp Business Documents" && ls "${D}"`));
   st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('dossier WhatsApp trouvé:', st.whatsappFolder);
 
@@ -36,10 +36,8 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   log('notif privée:', sh(`adb shell "cmd notification post -S messaging --conversation '' --message 'Youssef:📷 Photo' prive1 'x'"`));
   log('notif 2:', sh(`adb shell "cmd notification post -S messaging --conversation 'Famille' --message 'Ali:📷 Photo' fam1 'x'"`));
   await wait(3000);
-  sh(`adb push label.jpg "${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg"`);
-  sh(`adb push bon.pdf "${D}/WhatsApp Business Documents/BRV-2026112500123.pdf"`);
-  sh(`adb shell "touch '${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg' '${D}/WhatsApp Business Documents/BRV-2026112500123.pdf'"`);
-  log('push:', sh(`adb shell "ls '${D}/WhatsApp Business Images'"`)); log('fichiers:', sh(`adb shell "ls -l '${D}/WhatsApp Business Images' '${D}/WhatsApp Business Documents'"`));
+  sh('adb push label.jpg /data/local/tmp/l.jpg'); sh('adb push bon.pdf /data/local/tmp/b.pdf'); sh('adb shell chmod 644 /data/local/tmp/l.jpg /data/local/tmp/b.pdf');
+  RA(`cp /data/local/tmp/l.jpg "${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg" && cp /data/local/tmp/b.pdf "${D}/WhatsApp Business Documents/BRV-2026112500123.pdf"`);
   st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('groupes vus (non suivis):', (st.seen || []).map(x => x.name), '| en attente de fichier:', st.waiting);
   await wait(15000);

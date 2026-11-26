@@ -112,7 +112,7 @@ object WaBot {
         val t = treeUri(ctx) ?: return false
         return ctx.contentResolver.persistedUriPermissions.any { it.uri == t && it.isReadPermission }
     }
-    private fun testRoot(ctx: Context) = File(ctx.getExternalFilesDir(null), "wa-test/Media")
+    private fun testRoot(ctx: Context) = File(ctx.filesDir, "wa-test/Media")
 
     fun status(ctx: Context): JSONObject = synchronized(lock) {
         val o = load(ctx)
