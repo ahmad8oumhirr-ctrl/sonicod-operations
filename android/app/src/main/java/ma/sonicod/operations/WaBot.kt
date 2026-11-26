@@ -373,22 +373,20 @@ object WaBot {
     data class Count(val colis: Int?, val source: String, val brvs: Map<String, Int>, val commandes: Int = 0)
 
     /**
-     * COLIS = gros colis (sacs noirs) : 1 photo = 1 colis ; COMMANDES = petits colis avec ticket (le même n° = 1 commande) ;
+     * COLIS = gros sacs / gros cartons (sans ticket) : 1 photo = 1 colis ; les petites commandes (avec ticket) NE COMPTENT PAS ;
      * l'étiquette « BON RETOUR » ne compte pas (son nombre est gardé dans la note).
      */
     fun countColis(reads: List<Label?>, nPhotos: Int): Count {
         val brvs = LinkedHashMap<String, Int>()
-        val tracks = HashSet<String>()
-        var labels = 0; var tickets = 0; var noTrack = 0
+        var labels = 0; var tickets = 0
         for (d in reads) {
             if (d == null) continue
             if (d.label) { labels++; if (d.colis != null) { val k = d.brv.ifEmpty { "n" + d.colis }; brvs[k] = maxOf(brvs[k] ?: 0, d.colis) }; continue }
-            if (d.ticket || d.tracks.isNotEmpty()) { tickets++; if (d.tracks.isNotEmpty()) tracks.addAll(d.tracks) else noTrack++ }
+            if (d.ticket || d.tracks.isNotEmpty()) tickets++
         }
-        val commandes = tracks.size + noTrack
         val colis = maxOf(0, nPhotos - labels - tickets)
         val lab = if (brvs.isEmpty()) null else brvs.values.sum()
-        return Count(colis, "$colis colis (sacs) · $commandes commande(s)" + (if (lab != null) " · étiquette : $lab" else ""), brvs, commandes)
+        return Count(colis, "$colis colis" + (if (tickets > 0) " · $tickets photo(s) de petites commandes non comptée(s)" else "") + (if (lab != null) " · étiquette : $lab" else ""), brvs, tickets)
     }
 
     /** Même identifiant que le bot Chrome (« wa- » + hash de « groupe|jour ») : une seule ligne par groupe et par jour. */
@@ -526,7 +524,7 @@ object WaBot {
                     .put("mime", if (nm.endsWith(".pdf", true)) "application/pdf" else "application/octet-stream"))
             }
             val req = JSONObject().put("action", "addPending").put("key", APP_KEY).put("pid", pid).put("livreur", ville)
-                .put("colis", colis ?: "").put("commandes", commandes).put("date", day).put("who", "Bot téléphone").put("note", note)
+                .put("colis", colis ?: "").put("date", day).put("who", "Bot téléphone").put("note", note)
                 .put("photos", photos).put("files", files)
             val resp = try { Api.post(Session.serverUrl(ctx), req.toString()) } finally { tmp.forEach { PhotoStore.delete(ctx, it) } }
             if (!resp.optBoolean("ok")) throw Exception(resp.optString("error", "Erreur serveur"))
@@ -541,7 +539,7 @@ object WaBot {
                 val all = o.obj("sent"); while (all.length() > 200) all.remove(all.keys().next())
             }
         }
-        log(ctx, "✓ $group → $ville $colis colis · $commandes commande(s)" + " · +" + newImgs.size + " photo(s) · +" + newDocs.size + " PDF (ligne $lastRow)")
+        log(ctx, "✓ $group → $ville $colis colis" + " · +" + newImgs.size + " photo(s) · +" + newDocs.size + " PDF (ligne $lastRow)")
         return true
     }
 }

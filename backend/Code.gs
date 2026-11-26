@@ -29,7 +29,6 @@ var PENDING_SHEET = 'Retours en attente';
 var PENDING_HEADER = ['DATE', 'VILLE / LIVREUR', 'COLIS', 'STATUT', 'DATE VALIDATION', 'NOTE / GROUPE', 'PHOTOS', 'BON (PDF)', 'PAR', 'RÉF'];
 var PENDING_STATUSES = ['En attente', 'VALIDER'];
 var RETARD_COL = 11;   // colonne K : retard en jours (formule)
-var CMD_COL = 12;      // colonne L : nombre de commandes (petits colis avec ticket), COLIS = gros sacs noirs
 
 var PHOTO_FOLDER_NAME = 'SONICOD – Photos opérations';
 var WHATSAPP_GROUP = 'https://chat.whatsapp.com/LP2gQjIm7R95AYBLIj27Ad';
@@ -401,7 +400,6 @@ function retardFormula_(r) {
 }
 
 function pendingFormat_(sh) {
-  sh.getRange(1, CMD_COL).setValue('COMMANDES').setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#6E2B92').setHorizontalAlignment('center');
   sh.getRange(1, RETARD_COL).setValue('RETARD (jours)').setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#6E2B92').setHorizontalAlignment('center');
   var last = sh.getLastRow();
   if (last >= 2) {
@@ -432,8 +430,6 @@ function addPending_(req) {
   if (!livreur) throw new AppError('Choisissez la ville / le livreur.');
   var colis = req.colis === '' || req.colis === null || req.colis === undefined ? NaN : Number(req.colis);
   if (!(colis >= 0) || Math.floor(colis) !== colis) colis = '';      // inconnu : à compléter dans le Sheet (0 = aucun sac)
-  var cmds = req.commandes === undefined || req.commandes === null || req.commandes === '' ? '' : Number(req.commandes);
-  if (cmds !== '' && (!(cmds >= 0) || Math.floor(cmds) !== cmds)) cmds = '';
   var d = parseIsoDate_(req.date, 'Date');
   var note = String(req.note || '').trim().slice(0, 1000);
   var who = String(req.who || '').trim().slice(0, 30);
@@ -442,9 +438,6 @@ function addPending_(req) {
 
   return withLock_(function () {
     var sh = pendingSheet_();
-    if (cmds !== '' && sh.getRange(1, CMD_COL).getValue() === '') {
-      sh.getRange(1, CMD_COL).setValue('COMMANDES').setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#6E2B92').setHorizontalAlignment('center');
-    }
     var prev = seen_('pd_' + pid);
     var r = prev ? prev.row : 0;
     if (r && String(sh.getRange(r, 10).getValue()) !== pid) r = 0;   // ligne déplacée : on la recherche
@@ -512,13 +505,11 @@ function addPending_(req) {
       r = sh.getLastRow() + 1;
       sh.getRange(r, 1, 1, PENDING_HEADER.length).setValues([[d, livreur, colis, 'En attente', '', note, '', '', who, pid]]);
       sh.getRange(r, 1).setNumberFormat('dd/MM/yyyy');
-      if (cmds !== '') sh.getRange(r, CMD_COL).setValue(cmds).setHorizontalAlignment('center');
       sh.getRange(r, RETARD_COL).setFormula(retardFormula_(r)).setNumberFormat('0" j"').setHorizontalAlignment('center');
     } else {
       photoLinks = runsOf_(sh.getRange(r, 7).getRichTextValue()).map(function (x) { return x.url; }).concat(newPhotos);
       docs = runsOf_(sh.getRange(r, 8).getRichTextValue()).concat(newDocs);
       if (colis !== '') sh.getRange(r, 3).setValue(colis);
-      if (cmds !== '') sh.getRange(r, CMD_COL).setValue(cmds);
       if (note) sh.getRange(r, 6).setValue(note);
     }
     if (newPhotos.length || isNew) setPhotosCell_(sh.getRange(r, 7), photoLinks, '');
@@ -557,7 +548,6 @@ function listPending_() {
   var n = last - 1;
   var vals = sh.getRange(2, 1, n, PENDING_HEADER.length).getValues();
   var richP = sh.getRange(2, 7, n, 1).getRichTextValues();
-  var cmdV = sh.getRange(2, CMD_COL, n, 1).getValues();
   var richD = sh.getRange(2, 8, n, 1).getRichTextValues();
   var limit = Date.now() - 7 * 86400000;
   var out = [];
@@ -571,7 +561,7 @@ function listPending_() {
       row: i + 2, pid: String(v[9]), statut: waiting ? 'En attente' : 'VALIDER',
       date: v[0] instanceof Date ? Utilities.formatDate(v[0], TZ, 'yyyy-MM-dd') : String(v[0]),
       dateValidation: v[4] instanceof Date ? Utilities.formatDate(v[4], TZ, 'yyyy-MM-dd') : '',
-      livreur: String(v[1]), colis: v[2] === '' ? null : Number(v[2]), commandes: cmdV[i][0] === '' ? null : Number(cmdV[i][0]), note: String(v[5]),
+      livreur: String(v[1]), colis: v[2] === '' ? null : Number(v[2]), note: String(v[5]),
       photoLinks: runsOf_(richP[i][0]).map(function (x) { return x.url; }),
       docs: runsOf_(richD[i][0])
     });
@@ -651,7 +641,8 @@ function parseLabel_(text) {
   var tr = {};
   (flat.toUpperCase().match(/\b[A-Z]{1,3}\d{8,12}\b/g) || []).forEach(function (x) { if (!/^[BG8]R[VY]/.test(x)) tr[x] = 1; });
   r.tracks = Object.keys(tr).slice(0, 20);
-  // Ticket de COMMANDE (petit colis) : n° de suivi, « SONICOD » hors bon de retour, prix en DH. Sinon : gros colis (sac noir).
+  // Ticket de petite COMMANDE (n° de suivi, « SONICOD » hors bon de retour, prix en DH) : NE COMPTE PAS.
+  // Les colis (gros sacs / gros cartons) n'ont pas de ticket.
   r.ticket = !r.label && (r.tracks.length > 0 || /SONICOD/i.test(flat) || /\b\d{2,5}(?:[.,]\d{1,2})?\s*DH\b/i.test(flat));
   // « 201 | 2/2 » = 201 colis, étiquette 2 sur 2. La lecture colle parfois tout : « 2012/2 » → 201 + 2/2.
   var ci = flat.search(/N[O0][A-Z]{0,4}\s*D[EU]\s*CO[LI]{0,2}S|NOMBRE|COLIS/i);

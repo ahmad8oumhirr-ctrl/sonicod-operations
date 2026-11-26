@@ -480,7 +480,7 @@ class MainActivity : ComponentActivity() {
                 val colis: Any = cnt.colis ?: JSONObject.NULL
                 val source = cnt.source
                 val brvs = cnt.brvs
-                reply(cb, JSONObject().put("ok", true).put("colis", colis).put("commandes", cnt.commandes).put("source", source)
+                reply(cb, JSONObject().put("ok", true).put("colis", colis).put("source", source)
                     .put("brvs", JSONArray(brvs.keys.filter { it.startsWith("BRV") })))
             }
         }

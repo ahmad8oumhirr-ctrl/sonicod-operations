@@ -379,24 +379,22 @@
    *  3) sinon 1 photo = 1 colis, et le même n° de suivi sur 2 photos = 1 seul colis.
    */
   /**
-   * Colis et commandes du groupe pour le jour :
-   *  - COLIS = gros colis (sacs noirs) : 1 photo = 1 colis ;
-   *  - COMMANDES = petits colis avec ticket (n° de suivi N…, SONICOD, prix DH) : le même n° sur 2 photos = 1 commande ;
+   * Colis du groupe pour le jour :
+   *  - COLIS = gros sacs / gros cartons (sans ticket) : 1 photo = 1 colis ;
+   *  - petites commandes (ticket N…, SONICOD, prix DH) : NE COMPTENT PAS ;
    *  - l'étiquette « BON RETOUR » ne compte pas (son nombre est gardé dans la note).
    */
   function countColis(reads, nPhotos) {
-    const brvs = {}, tracks = {};
-    let labels = 0, tickets = 0, ticketsNoTrack = 0, read = 0;
+    const brvs = {};
+    let labels = 0, tickets = 0;
     reads.forEach(d => {
       if (!d) return;
-      read++;
       if (d.label) { labels++; if (d.colis != null) { const k = d.brv || ('n' + d.colis); brvs[k] = Math.max(brvs[k] || 0, d.colis); } return; }
-      if (d.ticket || (d.tracks && d.tracks.length)) { tickets++; if (d.tracks && d.tracks.length) d.tracks.forEach(t => { tracks[t] = 1; }); else ticketsNoTrack++; }
+      if (d.ticket || (d.tracks && d.tracks.length)) tickets++;
     });
-    const commandes = Object.keys(tracks).length + ticketsNoTrack;
     const colis = Math.max(0, nPhotos - labels - tickets);
     const lab = Object.keys(brvs).length ? Object.values(brvs).reduce((a, b) => a + b, 0) : null;
-    return { colis, commandes, source: colis + ' colis (sacs) · ' + commandes + ' commande(s)' + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
+    return { colis, commandes: tickets, source: colis + ' colis' + (tickets ? ' · ' + tickets + ' photo(s) de petites commandes non comptée(s)' : '') + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
   }
 
   /** Lire le groupe ouvert. */
@@ -636,7 +634,7 @@
     log('Envoi ' + r.group + ' au Sheet…');
     const brv = Object.keys(r.brvs).filter(k => k.startsWith('BRV'));
     const res = await api({
-      action: 'addPending', pid, livreur: r.livreur, colis: r.colis == null ? '' : r.colis, commandes: r.commandes == null ? '' : r.commandes, date: r.day, who: 'Bot WhatsApp',
+      action: 'addPending', pid, livreur: r.livreur, colis: r.colis == null ? '' : r.colis, date: r.day, who: 'Bot WhatsApp',
       note: r.group + (r.source ? ' · ' + r.source : '') + (brv.length ? ' · ' + brv.join(', ') : ''), photos, files
     });
     if (res.ok) {
