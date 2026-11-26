@@ -325,8 +325,8 @@ object WaBot {
         val tracks = Regex("\\b[A-Z]{1,3}\\d{8,12}\\b").findAll(flat.uppercase(Locale.ROOT)).map { it.value }
             .filter { !Regex("^[BG8]R[VY]").containsMatchIn(it) }.distinct().take(20).toList()
         val c = colis
-        // ticket de COMMANDE (petit colis) : n° de suivi, « SONICOD » hors bon de retour, prix en DH
-        val ticket = !isLabel && (tracks.isNotEmpty() || flat.contains("SONICOD", true) || Regex("\\b\\d{2,5}(?:[.,]\\d{1,2})?\\s*DH\\b", RegexOption.IGNORE_CASE).containsMatchIn(flat))
+        // petite COMMANDE (petit carton / sachet de commerce) : ticket avec PRIX (« 335 DH », « Prix », « MAD ») → ne compte pas
+        val ticket = !isLabel && Regex("\\b\\d{1,6}(?:[.,]\\d{1,2})?\\s*(?:DH|DHS|MAD)\\b|\\bPRIX\\b|\\bDH\\s*\\d", RegexOption.IGNORE_CASE).containsMatchIn(flat)
         return Label(if (isLabel && c != null && c > 0) c else null, brv, zone, isLabel, tracks, ticket)
     }
 
@@ -346,12 +346,12 @@ object WaBot {
                 val text = Tasks.await(rec.process(img), 40, TimeUnit.SECONDS).text
                 val lab = parseLabel(text)
                 if (lab.label || lab.ticket) return lab
-                // code-barres / QR visible et pas un bon de retour → ticket de commande
+                // code-barres du ticket (n° de suivi) : sert seulement à ne pas compter 2 fois le même colis
                 val bc = com.google.mlkit.vision.barcode.BarcodeScanning.getClient()
                 return try {
                     val codes = Tasks.await(bc.process(img), 20, TimeUnit.SECONDS)
                     val tr = codes.mapNotNull { it.rawValue?.trim() }.filter { Regex("^[A-Z]{1,3}\\d{8,12}$").matches(it) }
-                    if (codes.isNotEmpty()) lab.copy(ticket = true, tracks = (lab.tracks + tr).distinct()) else lab
+                    if (tr.isNotEmpty()) lab.copy(tracks = (lab.tracks + tr).distinct()) else lab
                 } catch (e: Exception) { lab } finally { bc.close() }
             } finally {
                 rec.close(); bmp.recycle()
@@ -373,20 +373,23 @@ object WaBot {
     data class Count(val colis: Int?, val source: String, val brvs: Map<String, Int>, val commandes: Int = 0)
 
     /**
-     * COLIS = gros sacs / gros cartons (sans ticket) : 1 photo = 1 colis ; les petites commandes (avec ticket) NE COMPTENT PAS ;
-     * l'étiquette « BON RETOUR » ne compte pas (son nombre est gardé dans la note).
+     * COLIS = tout gros colis (grand carton, grande mika de toute couleur), avec ou sans ticket : 1 photo = 1 colis,
+     * le même n° de ticket sur 2 photos = 1 colis. NE COMPTENT PAS : petites commandes dont le ticket porte un prix (DH),
+     * et l'étiquette « BON RETOUR » (son nombre est gardé dans la note).
      */
     fun countColis(reads: List<Label?>, nPhotos: Int): Count {
         val brvs = LinkedHashMap<String, Int>()
-        var labels = 0; var tickets = 0
+        val tracks = HashSet<String>()
+        var labels = 0; var small = 0; var withTrack = 0
         for (d in reads) {
             if (d == null) continue
             if (d.label) { labels++; if (d.colis != null) { val k = d.brv.ifEmpty { "n" + d.colis }; brvs[k] = maxOf(brvs[k] ?: 0, d.colis) }; continue }
-            if (d.ticket || d.tracks.isNotEmpty()) tickets++
+            if (d.ticket) { small++; continue }
+            if (d.tracks.isNotEmpty()) { withTrack++; tracks.addAll(d.tracks) }
         }
-        val colis = maxOf(0, nPhotos - labels - tickets)
+        val colis = tracks.size + maxOf(0, nPhotos - labels - small - withTrack)
         val lab = if (brvs.isEmpty()) null else brvs.values.sum()
-        return Count(colis, "$colis colis" + (if (tickets > 0) " · $tickets photo(s) de petites commandes non comptée(s)" else "") + (if (lab != null) " · étiquette : $lab" else ""), brvs, tickets)
+        return Count(colis, "$colis colis" + (if (small > 0) " · $small petite(s) commande(s) avec prix non comptée(s)" else "") + (if (lab != null) " · étiquette : $lab" else ""), brvs, small)
     }
 
     /** Même identifiant que le bot Chrome (« wa- » + hash de « groupe|jour ») : une seule ligne par groupe et par jour. */
@@ -479,11 +482,11 @@ object WaBot {
         val reads = ArrayList<Label?>()
         for (i in 0 until imgs.length()) {
             val path = imgs.getString(i)
-            val cached = ocr.optJSONObject(path)?.takeIf { it.optInt("v") == 2 }
+            val cached = ocr.optJSONObject(path)?.takeIf { it.optInt("v") == 3 }
             val lab = if (cached != null) Label(cached.optInt("c", 0).takeIf { it > 0 }, cached.optString("b"), "", cached.optBoolean("l"),
                 cached.optJSONArray("t")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(), cached.optBoolean("k"))
             else (readLabelFrom(ctx) { open(ctx, path) } ?: Label(null, "", "")).also {
-                newOcr.put(path, JSONObject().put("c", it.colis ?: 0).put("b", it.brv).put("l", it.label).put("t", JSONArray(it.tracks)).put("k", it.ticket).put("v", 2))
+                newOcr.put(path, JSONObject().put("c", it.colis ?: 0).put("b", it.brv).put("l", it.label).put("t", JSONArray(it.tracks)).put("k", it.ticket).put("v", 3))
             }
             reads.add(lab)
         }

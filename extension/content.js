@@ -345,10 +345,10 @@
       while (idx < rec.raw.length && !offline) {
         const { b64, ph } = rec.raw[idx++];
         let d = cache[ph];
-        if (d && d.v !== 2) d = null;          // ancienne lecture sans « commande » : on relit
+        if (d && d.v !== 3) d = null;          // ancienne lecture sans « commande » : on relit
         if (!d) {
           const r = await api({ action: 'ocrLabel', b64 });
-          if (r.ok) { d = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone, label: r.data.label, tracks: r.data.tracks || [], ticket: !!r.data.ticket, v: 2 }; fresh[ph] = d; }
+          if (r.ok) { d = { colis: r.data.colis, brv: r.data.brv, zone: r.data.zone, label: r.data.label, tracks: r.data.tracks || [], ticket: !!r.data.ticket, v: 3 }; fresh[ph] = d; }
           else if (r.network) { offline = true; log('Serveur injoignable'); }
         }
         reads.push(d || null);
@@ -380,21 +380,23 @@
    */
   /**
    * Colis du groupe pour le jour :
-   *  - COLIS = gros sacs / gros cartons (sans ticket) : 1 photo = 1 colis ;
-   *  - petites commandes (ticket N…, SONICOD, prix DH) : NE COMPTENT PAS ;
+   *  - COLIS = tout gros colis (grand carton, grande mika de toute couleur), avec ou sans ticket : 1 photo = 1 colis,
+   *    et le même n° de ticket sur 2 photos = 1 seul colis ;
+   *  - NE COMPTENT PAS : les petites commandes (petit carton / sachet de commerce) dont le ticket porte un PRIX (DH) ;
    *  - l'étiquette « BON RETOUR » ne compte pas (son nombre est gardé dans la note).
    */
   function countColis(reads, nPhotos) {
-    const brvs = {};
-    let labels = 0, tickets = 0;
+    const brvs = {}, tracks = {};
+    let labels = 0, small = 0, withTrack = 0;
     reads.forEach(d => {
       if (!d) return;
       if (d.label) { labels++; if (d.colis != null) { const k = d.brv || ('n' + d.colis); brvs[k] = Math.max(brvs[k] || 0, d.colis); } return; }
-      if (d.ticket || (d.tracks && d.tracks.length)) tickets++;
+      if (d.ticket) { small++; return; }                                     // ticket avec prix = petite commande
+      if (d.tracks && d.tracks.length) { withTrack++; d.tracks.forEach(t => { tracks[t] = 1; }); }
     });
-    const colis = Math.max(0, nPhotos - labels - tickets);
+    const colis = Object.keys(tracks).length + Math.max(0, nPhotos - labels - small - withTrack);
     const lab = Object.keys(brvs).length ? Object.values(brvs).reduce((a, b) => a + b, 0) : null;
-    return { colis, commandes: tickets, source: colis + ' colis' + (tickets ? ' · ' + tickets + ' photo(s) de petites commandes non comptée(s)' : '') + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
+    return { colis, commandes: small, source: colis + ' colis' + (small ? ' · ' + small + ' petite(s) commande(s) avec prix non comptée(s)' : '') + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
   }
 
   /** Lire le groupe ouvert. */

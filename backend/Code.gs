@@ -641,9 +641,9 @@ function parseLabel_(text) {
   var tr = {};
   (flat.toUpperCase().match(/\b[A-Z]{1,3}\d{8,12}\b/g) || []).forEach(function (x) { if (!/^[BG8]R[VY]/.test(x)) tr[x] = 1; });
   r.tracks = Object.keys(tr).slice(0, 20);
-  // Ticket de petite COMMANDE (n° de suivi, « SONICOD » hors bon de retour, prix en DH) : NE COMPTE PAS.
-  // Les colis (gros sacs / gros cartons) n'ont pas de ticket.
-  r.ticket = !r.label && (r.tracks.length > 0 || /SONICOD/i.test(flat) || /\b\d{2,5}(?:[.,]\d{1,2})?\s*DH\b/i.test(flat));
+  // Petite COMMANDE (petit carton ou sachet de commerce) : son ticket porte un PRIX (« 335 DH », « Prix », « MAD ») → NE COMPTE PAS.
+  // Les gros colis (grand carton, grande mika de toute couleur) comptent, avec ou sans ticket de retour.
+  r.ticket = !r.label && /\b\d{1,6}(?:[.,]\d{1,2})?\s*(?:DH|DHS|MAD)\b|\bPRIX\b|\bDH\s*\d/i.test(flat);
   // « 201 | 2/2 » = 201 colis, étiquette 2 sur 2. La lecture colle parfois tout : « 2012/2 » → 201 + 2/2.
   var ci = flat.search(/N[O0][A-Z]{0,4}\s*D[EU]\s*CO[LI]{0,2}S|NOMBRE|COLIS/i);
   var zoneTxt = ci >= 0 ? flat.slice(ci) : flat;
