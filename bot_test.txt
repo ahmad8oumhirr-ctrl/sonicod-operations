@@ -1,0 +1,28 @@
+autorisation notifications: ok
+statut: {"notif":true,"files":false,"dossierWhatsApp":false,"ignorés":["Karim"]}
+dossier créé: WhatsApp Business Documents
+WhatsApp Business Images
+dossier WhatsApp trouvé: true
+notif 1: posting:
+  Notification(channel=shell_cmd shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 vis=PRIVATE)
+notif Karim (ignoré): posting:
+  Notification(channel=shell_cmd shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 vis=PRIVATE)
+notif privée: posting:
+  Notification(channel=shell_cmd shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 vis=PRIVATE)
+notif 2: posting:
+  Notification(channel=shell_cmd shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 vis=PRIVATE)
+groupes vus (non suivis): ["Famille"] | en attente de fichier: 5
+PASSAGE DU BOT…
+résultat: {"ok":true,"sent":1,"errors":0,"records":1}
+JOURNAL:
+26/11 15:45  ⚠ Choisissez le dossier WhatsApp Business
+26/11 15:45  → Retour TEST Claude 4696 (2026-11-26) : 1 photo(s), 1 PDF, 2 colis lus
+26/11 15:45  Bon déjà enregistré, ignoré : BRV-2026112500123.pdf (déjà enregistré le 25/11/2026)
+26/11 15:45  ✓ Retour TEST Claude 4696 → CASA 2 colis · +1 photo(s) · +1 PDF (ligne 5)
+passage après 90 s: {"ok":true,"sent":0,"errors":0,"records":1}
+SANS NOTIFICATION: ["IMG-20261126-WA0005.jpg"]
+après choix du groupe: {"ok":true,"sent":1,"errors":0,"records":1}
+JOURNAL après choix: ["26/11 15:47  ⚠ 1 photo(s)/PDF reçus sans notification : choisissez le groupe","26/11 15:47  → Retour TEST Claude 4696 (2026-11-26) : 1 photo(s), 0 PDF, 2 colis lus","26/11 15:47  ✓ Retour TEST Claude 4696 → CASA 2 colis · +1 photo(s) · +0 PDF (ligne 5)"] | reste sans groupe: 0
+2e passage (rien de nouveau attendu): {"ok":true,"sent":0,"errors":0,"records":1}
+JOURNAL fin: ["26/11 15:47  → Retour TEST Claude 4696 (2026-11-26) : 1 photo(s), 0 PDF, 2 colis lus","26/11 15:47  ✓ Retour TEST Claude 4696 → CASA 2 colis · +1 photo(s) · +0 PDF (ligne 5)"]
+FIN TEST BOT

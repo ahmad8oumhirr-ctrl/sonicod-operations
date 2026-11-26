@@ -1,0 +1,5 @@
+autorisation caméra: ok
+activité au premier plan: mResumedActivity: ActivityRecord{bebd0e6 u0 ma.sonicod.operations/.ScanActivity t9}
+réponse après Retour: {"ok":false,"cancelled":true}
+style: sonicod
+FIN TEST SCANNER

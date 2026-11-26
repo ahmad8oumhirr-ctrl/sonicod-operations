@@ -1,0 +1,23 @@
+== ping
+{"ok":true,"data":{"app":"SONICOD Opérations"}}
+== mauvaise clé
+{"ok":false,"error":"Application non autorisée (clé incorrecte).","code":"key"}
+== config
+{"ok":true,"data":{"cities":["Agadir","BENI MELAL","CASA","Chtouka","EL JADIDA","ERRACHIDIA","FES","IBEX SUD","MARRAEKCH","OUARZAZAT","OUJDA","RABAT","SAFI","Sud","TANGER","taroudant"],"statuses":["VALIDER","Attent Reclamation"],"whatsappGroup":"https://chat.whatsapp.com/LP2gQjIm7R95AYBLIj27Ad"}}
+== submit avec photo
+{"ok":true,"data":{"row":283,"delai":2,"photoLinks":["https://drive.google.com/file/d/1vzm3qX8wTZppJaPDXQo5HDDoPYDbWWUg/view"],"duplicate":false}}
+== submit (doublon attendu)
+{"ok":true,"data":{"row":283,"delai":2,"photoLinks":["https://drive.google.com/file/d/1vzm3qX8wTZppJaPDXQo5HDDoPYDbWWUg/view"],"duplicate":true}}
+== submit invalide (date envoi après réception)
+{"ok":false,"error":"La date d'envoi doit être avant (ou égale à) la date de réception.","code":"error"}
+== scan
+{"ok":true,"data":{"tracking":"TESTSRV1795707616","cell":"C214","duplicate":false}}
+== lecture étiquette (OCR)
+{"ok":true,"data":{"colis":201,"part":"12/2","zone":"HUB AGADIR","date":"2026-11-23","brv":"BRV-26112315421897","label":true,"tracks":[],"text":"________________ Rushliv Transcot & ogistics BON RETOUR CLIENT Magas SONICOD (233) Acresse N/A Telephone: +212 708988827 Zone HUB AGADIR Date 23/11/2026 NOWE DE COLS 201 12/2 GRV 26112315421897"}}
+== retour en attente (ajout)
+{"ok":true,"data":{"row":4,"created":true,"duplicate":false,"addedPhotos":1,"addedDocs":0,"docs":0,"skipped":1,"docsRefused":["TEST-BRV.pdf (déjà enregistré le 23/11/2026)"]}}
+== retour en attente (complément même groupe/jour)
+{"ok":true,"data":{"row":4,"created":false,"duplicate":true,"addedPhotos":1,"addedDocs":0,"docs":0,"skipped":0,"docsRefused":[]}}
+== liste
+{"ok":true,"data":[{"row":4,"pid":"test-1795707624","statut":"En attente","date":"2026-11-24","dateValidation":"","livreur":"CASA","colis":4,"note":"TEST CLAUDE – A SUPPRIMER","photoLinks":["https://drive.google.com/file/d/1NcuwHpD-Gi_aZzb9-rC8X15PxyGs_DIl/view","https://drive.google.com/file/d/1sOqXYQBxpoCA_DbJp6_xulUYWGbBnFvH/view"],"docs":[]},{"row":3,"pid":"test-1795707055","statut":"En attente","date":"2026-11-24","dateValidation":"","livreur":"CASA","colis":4,"note":"TEST CLAUDE – A SUPPRIMER","photoLinks":["https://drive.google.com/file/d/1lCvhAyjiHFh7XN4rPmsKEgHe1_QARW02/view","https://drive.google.com/file/d/1ExOYK3X4Lj85xNcPs9ietvwNedlpPNbU/view"],"docs":[]},{"row":2,"pid":"wa-79b13a00","statut":"En attente","date":"2026-11-26","dateValidation":"","livreur":"AMADEX SAFI","colis":2,"note":"Retour CASA Sonicod · 2 colis (nombre écrit)","photoLinks":["https://drive.google.com/file/d/1HCPE01K8LFlOoQJMhns5a2gKrS3qHO7v/view"],"docs":[]}]}
+

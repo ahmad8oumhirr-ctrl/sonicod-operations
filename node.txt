@@ -1,0 +1,62 @@
++ cd tests
++ OUT=../results
++ timeout 600 node app_test.js
+Cible: https://appassets.androidplatform.net/assets/www/index.html
+INFO natif: {"serverUrl":"https:\/\/script.google.com\/macros\/s\/AKfycbwJ1PN16V9WjRuOVN9cky7pKRTyufnSGlPCpw-gi4BKfGoXOQS1kn8pbcrrhPimt4sx\/exec","name":"","version":"4.10.2","whatsapp":false,"bot":false,"systemDark":false}
+Écran initial: Nouvelle opération
+PING (Paramètres): Connecté au Google Sheet ✓
+Villes chargées: 16
+Validation vide → erreurs: ["Choisissez la ville / le livreur.","Entrez un nombre entier positif.","Choisissez la date d'envoi.","Choisissez le statut."]
+OPERATION: Enregistrement… | Enregistrement dans Google Sheets…
+
+Vous pouvez déjà envoyer sur WhatsApp.
+SCAN 1: {"id":"147ae295-9ec3-4517-977e-aeb6eb7bc9cf","tracking":"TESTAPP7863242","at":"2026-11-26T15:44:22.345Z","status":"ok","cell":"C215"}
+SCAN 2 (doublon attendu): {"id":"b1b592fe-41dd-4866-b691-e68a1513fdd0","tracking":"TESTAPP7863242","at":"2026-11-26T15:44:26.424Z","status":"dup","where":"case C215"}
+Colis du lot: 1
+Bouton Terminer actif: true
+EN ATTENTE: Ajoutés automatiquement par le bot WhatsApp | Aucun retour en attente ✓
+Retour Sorties sans photo → Ajoutez au moins une photo
+FIN DU TEST
++ cd tests
++ OUT=../results
++ timeout 300 node scan_test.js
+autorisation caméra: ok
+Failed to write while dumping service activity: Broken pipe
+activité au premier plan: mResumedActivity: ActivityRecord{bebd0e6 u0 ma.sonicod.operations/.ScanActivity t9}
+réponse après Retour: {"ok":false,"cancelled":true}
+style: sonicod
+FIN TEST SCANNER
++ cd tests
++ OUT=../results
++ timeout 600 node bot_test.js
+autorisation notifications: ok
+statut: {"notif":true,"files":false,"dossierWhatsApp":false,"ignorés":["Karim"]}
+dossier créé: WhatsApp Business Documents
+WhatsApp Business Images
+dossier WhatsApp trouvé: true
+notif 1: posting:
+  Notification(channel=shell_cmd shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 vis=PRIVATE)
+notif Karim (ignoré): posting:
+  Notification(channel=shell_cmd shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 vis=PRIVATE)
+notif privée: posting:
+  Notification(channel=shell_cmd shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 vis=PRIVATE)
+notif 2: posting:
+  Notification(channel=shell_cmd shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x0 color=0x00000000 vis=PRIVATE)
+test.jpg: 1 file pushed, 0 skipped. 13.3 MB/s (677 bytes in 0.000s)
+label.jpg: 1 file pushed, 0 skipped. 537.1 MB/s (52837 bytes in 0.000s)
+bon.pdf: 1 file pushed, 0 skipped. 35.0 MB/s (1383 bytes in 0.000s)
+groupes vus (non suivis): ["Famille"] | en attente de fichier: 5
+PASSAGE DU BOT…
+résultat: {"ok":true,"sent":1,"errors":0,"records":1}
+JOURNAL:
+26/11 15:45  ⚠ Choisissez le dossier WhatsApp Business
+26/11 15:45  → Retour TEST Claude 4696 (2026-11-26) : 1 photo(s), 1 PDF, 2 colis lus
+26/11 15:45  Bon déjà enregistré, ignoré : BRV-2026112500123.pdf (déjà enregistré le 25/11/2026)
+26/11 15:45  ✓ Retour TEST Claude 4696 → CASA 2 colis · +1 photo(s) · +1 PDF (ligne 5)
+passage après 90 s: {"ok":true,"sent":0,"errors":0,"records":1}
+SANS NOTIFICATION: ["IMG-20261126-WA0005.jpg"]
+après choix du groupe: {"ok":true,"sent":1,"errors":0,"records":1}
+JOURNAL après choix: ["26/11 15:47  ⚠ 1 photo(s)/PDF reçus sans notification : choisissez le groupe","26/11 15:47  → Retour TEST Claude 4696 (2026-11-26) : 1 photo(s), 0 PDF, 2 colis lus","26/11 15:47  ✓ Retour TEST Claude 4696 → CASA 2 colis · +1 photo(s) · +0 PDF (ligne 5)"] | reste sans groupe: 0
+2e passage (rien de nouveau attendu): {"ok":true,"sent":0,"errors":0,"records":1}
+JOURNAL fin: ["26/11 15:47  → Retour TEST Claude 4696 (2026-11-26) : 1 photo(s), 0 PDF, 2 colis lus","26/11 15:47  ✓ Retour TEST Claude 4696 → CASA 2 colis · +1 photo(s) · +0 PDF (ligne 5)"]
+FIN TEST BOT

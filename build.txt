@@ -1,0 +1,20 @@
+> Task :app:mergeExtDexBotDebug
+
+> Task :app:compileBotDebugKotlin
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/MainActivity.kt:386:46 'VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/ScanActivity.kt:105:22 'setTargetResolution(Size): ImageAnalysis.Builder' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/WaBot.kt:248:22 'getParcelableArray(String?): Array<(out) Parcelable!>?' is deprecated. Deprecated in Java
+w: file:///home/runner/work/sonicod-operations/sonicod-operations/android/app/src/main/java/ma/sonicod/operations/WaBot.kt:252:71 'getParcelable(String?): T?' is deprecated. Deprecated in Java
+
+> Task :app:compileBotDebugJavaWithJavac
+> Task :app:dexBuilderBotDebug
+> Task :app:mergeBotDebugGlobalSynthetics
+> Task :app:processBotDebugJavaRes
+> Task :app:mergeProjectDexBotDebug
+> Task :app:mergeBotDebugJavaResource
+> Task :app:packageBotDebug
+> Task :app:createBotDebugApkListingFileRedirect
+> Task :app:assembleBotDebug
+
+BUILD SUCCESSFUL in 1m 53s
+77 actionable tasks: 77 executed

@@ -1,0 +1,16 @@
+Cible: https://appassets.androidplatform.net/assets/www/index.html
+INFO natif: {"serverUrl":"https:\/\/script.google.com\/macros\/s\/AKfycbwJ1PN16V9WjRuOVN9cky7pKRTyufnSGlPCpw-gi4BKfGoXOQS1kn8pbcrrhPimt4sx\/exec","name":"","version":"4.10.2","whatsapp":false,"bot":false,"systemDark":false}
+Écran initial: Nouvelle opération
+PING (Paramètres): Connecté au Google Sheet ✓
+Villes chargées: 16
+Validation vide → erreurs: ["Choisissez la ville / le livreur.","Entrez un nombre entier positif.","Choisissez la date d'envoi.","Choisissez le statut."]
+OPERATION: Enregistrement… | Enregistrement dans Google Sheets…
+
+Vous pouvez déjà envoyer sur WhatsApp.
+SCAN 1: {"id":"147ae295-9ec3-4517-977e-aeb6eb7bc9cf","tracking":"TESTAPP7863242","at":"2026-11-26T15:44:22.345Z","status":"ok","cell":"C215"}
+SCAN 2 (doublon attendu): {"id":"b1b592fe-41dd-4866-b691-e68a1513fdd0","tracking":"TESTAPP7863242","at":"2026-11-26T15:44:26.424Z","status":"dup","where":"case C215"}
+Colis du lot: 1
+Bouton Terminer actif: true
+EN ATTENTE: Ajoutés automatiquement par le bot WhatsApp | Aucun retour en attente ✓
+Retour Sorties sans photo → Ajoutez au moins une photo
+FIN DU TEST

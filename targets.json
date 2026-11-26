@@ -1,0 +1,9 @@
+[ {
+   "description": "{\"attached\":true,\"empty\":false,\"height\":2065,\"never_attached\":false,\"screenX\":0,\"screenY\":83,\"visible\":true,\"width\":1080}",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@ce7134bb3d95141cd18f1e65772a4247f282d950/inspector.html?ws=127.0.0.1:9222/devtools/page/452A426214FA798E4699BE37FAEBAC6C",
+   "id": "452A426214FA798E4699BE37FAEBAC6C",
+   "title": "Gestion Retour – SONICOD",
+   "type": "page",
+   "url": "https://appassets.androidplatform.net/assets/www/index.html",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/452A426214FA798E4699BE37FAEBAC6C"
+} ]
