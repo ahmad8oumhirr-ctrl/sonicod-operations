@@ -435,6 +435,9 @@ class MainActivity : ComponentActivity() {
         fun botSetEnabled(on: Boolean) = WaBot.setEnabled(this@MainActivity, on)
 
         @JavascriptInterface
+        fun botSetBlocked(json: String) { try { WaBot.setBlocked(this@MainActivity, JSONArray(json)) } catch (e: Exception) {} }
+
+        @JavascriptInterface
         fun botSetGroups(json: String) { try { WaBot.setGroups(this@MainActivity, JSONObject(json)) } catch (e: Exception) {} }
 
         @JavascriptInterface

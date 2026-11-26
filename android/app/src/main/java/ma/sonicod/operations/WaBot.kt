@@ -96,6 +96,23 @@ object WaBot {
 
     fun setGroups(ctx: Context, groups: JSONObject) { edit(ctx) { it.put("groups", groups) } }
 
+    /** Numéros / noms dont les photos ne doivent PAS être prises (ex. l'équipe SONICOD qui poste aussi dans le groupe). */
+    fun setBlocked(ctx: Context, list: JSONArray) { edit(ctx) { it.put("blocked", list) } }
+
+    private fun digits(s: String) = s.filter { it.isDigit() }
+    /** Vrai si l'expéditeur (nom affiché ou numéro) est dans la liste à ignorer. */
+    fun isBlocked(blocked: JSONArray?, name: String, id: String): Boolean {
+        if (blocked == null) return false
+        val dn = digits(name); val di = digits(id); val nn = norm(name)
+        for (i in 0 until blocked.length()) {
+            val b = blocked.optString(i).trim(); if (b.isEmpty()) continue
+            val db = digits(b)
+            if (db.length >= 8) { val k = db.takeLast(9); if ((dn.length >= 8 && dn.endsWith(k)) || (di.length >= 8 && di.endsWith(k))) return true }
+            else { val nb = norm(b); if (nb.isNotEmpty() && nn.isNotEmpty() && (nn == nb || nn.contains(nb))) return true }
+        }
+        return false
+    }
+
     /* ---------------- autorisations ---------------- */
 
     fun hasNotifAccess(ctx: Context): Boolean {
@@ -130,6 +147,10 @@ object WaBot {
             .put("files", hasFilesAccess(ctx))
             .put("whatsappFolder", roots.isNotEmpty())
             .put("groups", groups)
+            .put("blocked", o.optJSONArray("blocked") ?: JSONArray())
+            .put("senders", JSONArray().also { arr ->
+                o.optJSONObject("senders")?.let { so -> so.keys().asSequence().map { so.getJSONObject(it) }.sortedByDescending { it.optLong("t") }.take(30).forEach { arr.put(it) } }
+            })
             .put("seen", seen)
             .put("log", o.optJSONArray("log") ?: JSONArray())
             .put("lastRun", o.optLong("lastRun", 0))
@@ -163,13 +184,17 @@ object WaBot {
         }.replace(COUNT_SUFFIX, "").trim()
 
         val msgs = ArrayList<Pair<String, Long>>()
+        val senders = ArrayList<Pair<String, String>>()   // nom affiché, numéro / identifiant (si WhatsApp le donne)
         val arr = ex.getParcelableArray(Notification.EXTRA_MESSAGES)
         if (arr != null && arr.isNotEmpty()) {
             for (p in arr) (p as? Bundle)?.let { b ->
                 msgs.add((b.getCharSequence("text")?.toString() ?: "") to b.getLong("time", sbn.postTime))
+                val person = if (Build.VERSION.SDK_INT >= 28) try { b.getParcelable<android.app.Person>("sender_person") } catch (e: Exception) { null } else null
+                senders.add((b.getCharSequence("sender")?.toString() ?: person?.name?.toString() ?: "") to (person?.uri ?: person?.key ?: ""))
             }
         } else {
             msgs.add((ex.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: "") to sbn.postTime)
+            senders.add((if (title.contains(": ")) title.substringAfter(": ") else "") to "")
         }
 
         var added = 0
@@ -178,7 +203,9 @@ object WaBot {
             val ev = o.arr("events")
             val keys = HashSet<String>()
             for (i in 0 until ev.length()) keys.add(ev.getJSONObject(i).optString("id"))
-            for ((text, t) in msgs) {
+            for ((mi, m) in msgs.withIndex()) {
+                val (text, t) = m
+                val (sName, sId) = senders.getOrElse(mi) { "" to "" }
                 val kind: String
                 var name = ""
                 val d = DOC_RE.find(text)
@@ -188,7 +215,8 @@ object WaBot {
                 val id = "$group|$t|$kind|$name"
                 if (id in keys) continue
                 keys.add(id)
-                ev.put(JSONObject().put("id", id).put("g", group).put("t", t).put("k", kind).put("n", name))
+                ev.put(JSONObject().put("id", id).put("g", group).put("t", t).put("k", kind).put("n", name).put("s", sName).put("su", sId))
+                if (sName.isNotEmpty() || sId.isNotEmpty()) o.obj("senders").put((sName + "|" + sId).take(120), JSONObject().put("n", sName).put("u", sId).put("g", group).put("t", t))
                 added++
             }
             // on garde 4 jours
@@ -198,6 +226,8 @@ object WaBot {
             o.put("events", keep)
             val seen = o.obj("seen")
             seen.keys().asSequence().toList().forEach { if (seen.optLong(it) < limit - 10 * DAY) seen.remove(it) }
+            val snd = o.obj("senders")
+            if (snd.length() > 80) snd.keys().asSequence().toList().sortedBy { snd.optJSONObject(it)?.optLong("t") ?: 0 }.take(snd.length() - 60).forEach { snd.remove(it) }
         }
         if (added > 0 && isEnabled(ctx)) BotWorker.kick(ctx)
     }
@@ -396,6 +426,7 @@ object WaBot {
             val recs = LinkedHashMap<String, JSONObject>()
             for (e in list) {
                 val path = e.optString("f"); if (path.isEmpty()) continue
+                if (isBlocked(o.optJSONArray("blocked"), e.optString("s"), e.optString("su"))) continue   // photo d'un numéro ignoré
                 val g = e.optString("g")
                 val ville = matchGroup(groups, g) ?: continue
                 val day = dayFmt.format(Date(e.optLong("t")))

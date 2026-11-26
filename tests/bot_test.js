@@ -21,9 +21,10 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   log('autorisation notifications:', sh(`adb shell cmd notification allow_listener ${P}/ma.sonicod.operations.WaListener`) || 'ok');
   await js(`SonicodNative.botTestMode(true)`);
   await js(`SonicodNative.botSetGroups(JSON.stringify({'Retour CASA Sonicod':'CASA'}))`);
+  await js(`SonicodNative.botSetBlocked(JSON.stringify(['Karim']))`);   // les photos de Karim ne doivent pas être prises
   await wait(3000);
   let st = JSON.parse(await js('SonicodNative.botStatus()'));
-  log('statut:', { notif: st.notif, files: st.files, dossierWhatsApp: st.whatsappFolder });
+  log('statut:', { notif: st.notif, files: st.files, dossierWhatsApp: st.whatsappFolder, ignorés: st.blocked });
 
   const D = 'files/wa-test/Media';   // en test : dossier privé de l'app (en vrai : dossier WhatsApp choisi par l'utilisateur)
   const RA = c => { try { return cp.execFileSync('adb', ['shell', `run-as ${P} sh -c '${c}'`], { encoding: 'utf8' }).trim(); } catch (e) { return 'ERR ' + (e.stderr || e.message); } };
@@ -33,11 +34,14 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
 
   // notification de groupe : une photo + un bon PDF ; et une autre d'un groupe non suivi
   log('notif 1:', sh(`adb shell "cmd notification post -S messaging --conversation 'Retour CASA Sonicod' --message 'Ahmed:📷 Photo' --message 'Ahmed:📄 BRV-2026112500123.pdf' casa1 'x'"`));
+  await wait(1500);
+  log('notif Karim (ignoré):', sh(`adb shell "cmd notification post -S messaging --conversation 'Retour CASA Sonicod' --message 'Karim:📷 Photo' casa2 'x'"`));
   log('notif privée:', sh(`adb shell "cmd notification post -S messaging --conversation '' --message 'Youssef:📷 Photo' prive1 'x'"`));
   log('notif 2:', sh(`adb shell "cmd notification post -S messaging --conversation 'Famille' --message 'Ali:📷 Photo' fam1 'x'"`));
   await wait(3000);
+  sh('adb push test.jpg /data/local/tmp/k.jpg'); sh('adb shell chmod 644 /data/local/tmp/k.jpg');
   sh('adb push label.jpg /data/local/tmp/l.jpg'); sh('adb push bon.pdf /data/local/tmp/b.pdf'); sh('adb shell chmod 644 /data/local/tmp/l.jpg /data/local/tmp/b.pdf');
-  RA(`cp /data/local/tmp/l.jpg "${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg" && cp /data/local/tmp/b.pdf "${D}/WhatsApp Business Documents/BRV-2026112500123.pdf"`);
+  RA(`cp /data/local/tmp/l.jpg "${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg" && cp /data/local/tmp/b.pdf "${D}/WhatsApp Business Documents/BRV-2026112500123.pdf" && sleep 2 && cp /data/local/tmp/k.jpg "${D}/WhatsApp Business Images/IMG-20261126-WA0002.jpg"`);
   st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('groupes vus (non suivis):', (st.seen || []).map(x => x.name), '| en attente de fichier:', st.waiting);
   await wait(15000);

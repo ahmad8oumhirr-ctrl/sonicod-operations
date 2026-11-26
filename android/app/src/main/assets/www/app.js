@@ -921,6 +921,15 @@
         (ok ? '' : '<button class="btn btn-primary btn-sm" id="' + id + '">' + btn + '</button>') + '</div>';
     };
     var last = st.lastRun ? new Date(st.lastRun) : null;
+    var blocked = (st.blocked || []).slice();
+    var sendersFree = [];
+    (st.senders || []).forEach(function (x) {
+      var num = String(x.u || '').replace(/^tel:/, '').replace(/@.*$/, '');
+      var label = (x.n || '') + (/\d{8,}/.test(num.replace(/\D/g, '')) && (x.n || '').replace(/\D/g, '').slice(-9) !== num.replace(/\D/g, '').slice(-9) ? ' · ' + num : '');
+      var key = /\d{8,}/.test(num.replace(/\D/g, '')) ? num : (x.n || '');
+      if (!key || blocked.indexOf(key) >= 0 || sendersFree.some(function (y) { return y.key === key; })) return;
+      sendersFree.push({ key: key, label: label || key });
+    });
     view(
       '<div class="card"><div class="sec"><b>1 · Autorisations</b></div>' +
       step(st.notif, 1, 'Lire les notifications WhatsApp', 'Pour savoir quel groupe envoie une photo ou un PDF.', 'Activer', 'bNotif') +
@@ -941,6 +950,15 @@
         st.seen.map(function (x, i) { return '<button class="chip" data-gs="' + i + '">＋ ' + esc(x.name) + '</button>'; }).join('') + '</div>'
         : '<p class="muted small" style="margin-top:8px">Les groupes qui vous envoient des messages apparaîtront ici.</p>') +
       '<button class="btn btn-ghost" id="bAdd">＋ Ajouter un groupe par son nom</button></div>' +
+      '<div class="card"><div class="sec"><b>4 · Numéros à ignorer</b><small>' + (st.blocked || []).length + '</small></div>' +
+      '<p class="muted small" style="margin-top:0">Les photos et PDF envoyés par ces numéros (ou noms) ne sont pas pris.</p>' +
+      ((st.blocked || []).length ? '<div class="list">' + st.blocked.map(function (x, i) {
+        return '<div class="item"><div class="av">🚫</div><div class="main"><div class="t1">' + esc(x) + '</div></div><button class="btn btn-danger btn-sm" data-bd="' + i + '">✕</button></div>';
+      }).join('') + '</div>' : '') +
+      '<div class="row2" style="margin-top:8px;grid-template-columns:1fr auto"><input class="input" id="bNum" inputmode="tel" placeholder="Ex : 0612345678 ou un nom"><button class="btn btn-primary btn-sm" id="bNumAdd">Ajouter</button></div>' +
+      (sendersFree.length ? '<div class="sec" style="margin-top:12px"><b>Ont envoyé récemment</b><small>appuyez pour ignorer</small></div><div class="chips">' +
+        sendersFree.map(function (x, i) { return '<button class="chip" data-sb="' + i + '">🚫 ' + esc(x.label) + '</button>'; }).join('') + '</div>' : '') +
+      '</div>' +
       '<button class="btn btn-primary" id="bRun">' + ic('sync') + 'Lire maintenant</button>' +
       '<div class="card"><div class="sec"><b>Journal</b><small>' + (last ? 'dernier passage ' + pad(last.getHours()) + ':' + pad(last.getMinutes()) : '') +
       (st.waiting ? ' · ' + st.waiting + ' fichier(s) en attente de téléchargement' : '') + '</small></div>' +
@@ -964,6 +982,14 @@
       b.onclick = function () { var g = names[+b.getAttribute('data-gd')]; confirmBox('Retirer ce groupe ?', g, 'Retirer').then(function (ok) { if (ok) { delete groups[g]; saveGroups(); } }); };
     });
     $$('[data-gs]').forEach(function (b) { b.onclick = function () { addGroup(st.seen[+b.getAttribute('data-gs')].name); }; });
+    var saveBlocked = function () { NATIVE.botSetBlocked(JSON.stringify(blocked)); render(); };
+    $('#bNumAdd').onclick = function () {
+      var v = $('#bNum').value.trim(); if (!v) return;
+      if (blocked.indexOf(v) < 0) blocked.push(v);
+      saveBlocked(); toast('Ajouté : ses photos ne seront pas prises', 'ok');
+    };
+    $$('[data-bd]').forEach(function (b) { b.onclick = function () { blocked.splice(+b.getAttribute('data-bd'), 1); saveBlocked(); }; });
+    $$('[data-sb]').forEach(function (b) { b.onclick = function () { var x = sendersFree[+b.getAttribute('data-sb')]; if (blocked.indexOf(x.key) < 0) blocked.push(x.key); saveBlocked(); toast('Ignoré : ' + x.label, 'ok'); }; });
     $('#bAdd').onclick = function () { promptBox('Nom exact du groupe WhatsApp', 'Ex : Retour CASA Sonicod').then(addGroup); };
     $('#bRun').onclick = function () {
       if (!st.files) { toast('Choisissez d\'abord le dossier WhatsApp Business', 'err'); return; }
