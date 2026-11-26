@@ -21,7 +21,7 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   const P = 'ma.sonicod.operations.bot';
   log('autorisation notifications:', sh(`adb shell cmd notification allow_listener ${P}/ma.sonicod.operations.WaListener`) || 'ok');
   await js(`SonicodNative.botTestMode(true)`);
-  await js(`SonicodNative.botSetGroups(JSON.stringify({[G]:'CASA'}))`);
+  await js(`SonicodNative.botSetGroups(JSON.stringify({'${G}':'CASA'}))`);
   await js(`SonicodNative.botSetBlocked(JSON.stringify(['Karim']))`);
   await js(`SonicodNative.botSetEnabled(true)`);   // les photos de Karim ne doivent pas être prises
   await wait(3000);
