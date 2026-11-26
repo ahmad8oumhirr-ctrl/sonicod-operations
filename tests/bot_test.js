@@ -26,7 +26,7 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   log('statut:', { notif: st.notif, files: st.files, dossierWhatsApp: st.whatsappFolder });
 
   const D = 'files/wa-test/Media';   // en test : dossier privé de l'app (en vrai : dossier WhatsApp choisi par l'utilisateur)
-  const RA = c => sh(`adb shell "run-as ${P} sh -c '${c}'"`);
+  const RA = c => { try { return cp.execFileSync('adb', ['shell', `run-as ${P} sh -c '${c}'`], { encoding: 'utf8' }).trim(); } catch (e) { return 'ERR ' + (e.stderr || e.message); } };
   log('dossier créé:', RA(`mkdir -p "${D}/WhatsApp Business Images" "${D}/WhatsApp Business Documents" && ls "${D}"`));
   st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('dossier WhatsApp trouvé:', st.whatsappFolder);
