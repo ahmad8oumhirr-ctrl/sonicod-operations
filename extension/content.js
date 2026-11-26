@@ -115,6 +115,17 @@
     return (order || 'dm') === 'md' ? md : dm;
   }
 
+  /** Numéros / noms à ignorer (leurs photos et PDF ne sont pas pris). */
+  let blockedList = [];
+  function isBlocked(name, num) {
+    const dn = String(name || '').replace(/\D/g, ''), di = String(num || '').replace(/\D/g, ''), nn = normName(name);
+    return blockedList.some(b => {
+      const db = String(b).replace(/\D/g, '');
+      if (db.length >= 8) { const k = db.slice(-9); return (di.length >= 8 && di.endsWith(k)) || (dn.length >= 8 && dn.endsWith(k)); }
+      const nb = normName(b); return nb && nn && (nn === nb || nn.indexOf(nb) >= 0);
+    });
+  }
+
   /** Photos (blob) et documents PDF du chat ouvert, envoyés le jour choisi. */
   /**
    * Messages et séparateurs de jour du chat ouvert, DANS L'ORDRE de la page.
@@ -143,11 +154,21 @@
       if (!/^autre:/.test(d)) items.push({ type: 'day', el, day: d, text: t });
     });
     items.sort((x, y) => (x.el === y.el ? 0 : (x.el.compareDocumentPosition(y.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
-    let current = null;
+    let current = null, lastName = '', lastNum = '';
     items.forEach(it => {
-      if (it.type === 'day') { current = it.day; return; }
+      if (it.type === 'day') { current = it.day; lastName = ''; lastNum = ''; return; }
       const row = it.el.closest('[role="row"]') || it.el;
       it.row = row;
+      // expéditeur : numéro dans l'identifiant WhatsApp du message (…_2126XXXXXXXX@c.us), nom dans « [18:02, 23/11] Nom: »
+      const did = it.el.getAttribute('data-id') || '';
+      const mNum = /_(\d{8,15})@c\.us$/.exec(did);
+      const pre = row.querySelector('[data-pre-plain-text]');
+      const mName = pre ? /\]\s*([^:]+):\s*$/.exec(pre.getAttribute('data-pre-plain-text') || '') : null;
+      it.num = mNum ? mNum[1] : '';
+      it.sender = mName ? mName[1].trim() : '';
+      if (!it.sender && (!it.num || it.num === lastNum)) it.sender = lastName;   // messages à la suite du même expéditeur
+      if (!it.num && it.sender && it.sender === lastName) it.num = lastNum;
+      lastName = it.sender; lastNum = it.num;
       it.day = messageDay(row, today, order) || messageDay(it.el, today, order) || current;
     });
     return items;
@@ -159,11 +180,12 @@
     const imgs = [], docs = [];
     let extra = 0;   // albums : WhatsApp montre 4 photos et « +3 » pour les autres
     const seenImg = new Set();
-    let nMsg = 0;
+    let nMsg = 0, skippedBlocked = 0;
     items.forEach(it => {
       if (it.type !== 'msg') return;
       nMsg++;
       if (it.day !== dayIso) return;
+      if (isBlocked(it.sender, it.num)) { skippedBlocked++; return; }   // numéro / nom à ignorer
       const box = it.row;
       const mid = it.el.getAttribute('data-id') || '';
       let k = 0;
@@ -183,7 +205,7 @@
       const nameEl = Array.from(box.querySelectorAll('span, div')).find(e => e.children.length === 0 && /\.pdf\s*$/i.test(e.textContent || ''));
       if (nameEl && !docs.some(d => d.name === nameEl.textContent.trim())) docs.push({ name: nameEl.textContent.trim(), el: nameEl });
     });
-    log('Messages lus : ' + nMsg + ' · ' + fmt(dayIso) + ' : ' + imgs.length + ' photo(s), ' + docs.length + ' PDF');
+    log('Messages lus : ' + nMsg + ' · ' + fmt(dayIso) + ' : ' + imgs.length + ' photo(s), ' + docs.length + ' PDF' + (skippedBlocked ? ' · ' + skippedBlocked + ' message(s) de numéros ignorés' : ''));
     return { imgs, docs, extra };
   }
 
@@ -480,6 +502,7 @@
     const aLast = (await store.get('autoLast')) || 0;
     const nextAuto = new Date(Math.max(Date.now(), aLast + auto.every * 60000)).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     const lastRun = (await store.get('lastRun')) || '—';
+    const blocked = (await store.get('blocked')) || [];
     const cityOpts = sel => '<option value="">— Ville / Livreur —</option>' + cities.map(c => '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
     panel.innerHTML =
       '<div class="h"><b>⚡ SONICOD · Retours du jour</b><button id="snc-x">✕</button></div><div class="b">' +
@@ -506,6 +529,8 @@
       '<label>Nom du groupe (exactement comme dans WhatsApp)</label><input id="snc-gname" list="snc-chats" placeholder="Ex : Roteur Rushliv Casa"><datalist id="snc-chats">' + chatNames().map(n => '<option value="' + esc(n) + '">').join('') + '</datalist>' +
       '<label>Ville / Livreur</label><select id="snc-gcity">' + cityOpts('') + '</select>' +
       '<button class="btn" id="snc-gadd" style="margin-top:8px">＋ Ajouter</button></div>' +
+      '<div class="autobox"><b>🚫 Numéros à ignorer</b><div class="s" style="font-size:12px;color:#6F6680">Les photos et PDF envoyés par ces numéros (ou noms) ne sont pas pris. Un par ligne.</div>' +
+      '<textarea id="snc-block" rows="3" style="width:100%;margin-top:6px;border:1.5px solid #ECE7F2;border-radius:10px;padding:8px;font:inherit;color:#1D1428;background:#FAF8FC" placeholder="0612345678&#10;Yasser Sonicod">' + esc(blocked.join('\n')) + '</textarea></div>' +
       '<details open><summary>Mes groupes retour (' + Object.keys(groups).length + ')</summary>' +
       (Object.keys(groups).length ? Object.keys(groups).map(g => '<div class="grp">' + esc(g) + ' → ' + esc(groups[g] || '?') + ' <a href="#" data-del="' + esc(g) + '" style="float:right;color:#DC2626">retirer</a></div>').join('') : '<p>Aucun. Ouvrez un groupe et choisissez sa ville ci-dessus.</p>') +
       '<label>Adresse du script (…/exec)</label><input id="snc-url" placeholder="(par défaut)" value="' + esc(url) + '">' +
@@ -520,6 +545,11 @@
       if (!c) { log('Choisissez la ville du groupe.'); return; }
       const g = (await store.get('groups')) || {}; g[n] = c; await store.set('groups', g);
       log('Groupe ajouté : ' + n + ' → ' + c); renderPanel();
+    };
+    $('#snc-block').onchange = async () => {
+      blockedList = $('#snc-block').value.split(/\n|,|;/).map(x => x.trim()).filter(Boolean);
+      await store.set('blocked', blockedList);
+      log('Numéros à ignorer : ' + (blockedList.join(', ') || 'aucun'));
     };
     $('#snc-url').onchange = async () => { await store.set('serverUrl', $('#snc-url').value.trim()); log('Adresse enregistrée.'); };
     $('#snc-all').onclick = async () => {
@@ -631,6 +661,7 @@
   /** Lit tous les groupes enregistrés, pour un ou plusieurs jours (chaque groupe n'est ouvert qu'une fois). */
   async function runAll(days) {
     if (!Array.isArray(days)) days = [days];
+    blockedList = (await store.get('blocked')) || [];
     const groups = (await store.get('groups')) || {};
     const names = Object.keys(groups);
     const t0 = Date.now();
