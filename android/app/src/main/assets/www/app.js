@@ -150,6 +150,7 @@
   };
   window.sonicodResume = function () { applyTheme(); refreshSyncPill(); retryScans(); if (state.route === 'bot') render(); };
   window.sonicodBotRefresh = function () { if (state.route === 'bot') render(); };
+  window.sonicodOpen = function (r) { go(r); };
   /** Photos / bon PDF partagés depuis WhatsApp → écran « Partager ». */
   window.sonicodShareReady = function () {
     if (!NATIVE || !NATIVE.takeShared) return;
@@ -930,7 +931,22 @@
       if (!key || blocked.indexOf(key) >= 0 || sendersFree.some(function (y) { return y.key === key; })) return;
       sendersFree.push({ key: key, label: label || key });
     });
+    // photos reçues SANS notification : regroupées par moment (écart < 15 min)
+    var orph = (st.orphans || []).slice().sort(function (a, b) { return a.t - b.t; });
+    var clusters = [];
+    orph.forEach(function (x) { var c = clusters[clusters.length - 1]; if (c && x.t - c.end < 15 * 60000) { c.items.push(x); c.end = x.t; } else clusters.push({ start: x.t, end: x.t, items: [x] }); });
+    var hm = function (t) { var d = new Date(t); return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
     view(
+      (clusters.length ? '<div class="card" style="border:2px solid var(--warn,#E8A317)"><div class="sec"><b>⚠ Reçu sans notification</b><small>' + orph.length + '</small></div>' +
+        '<p class="muted small" style="margin-top:0">Téléphone éteint, groupe ouvert… Choisissez le groupe de chaque envoi : il partira au Sheet.</p>' +
+        clusters.map(function (c, ci) {
+          return '<div class="orph"><div class="small"><b>' + hm(c.start) + (c.end !== c.start ? ' → ' + hm(c.end).slice(6) : '') + '</b> · ' + c.items.length + ' fichier(s)</div>' +
+            '<div class="photos">' + c.items.map(function (x, k) {
+              return x.k === 'doc' ? '<div class="ph doc">📄<span>' + esc(x.n) + '</span></div>' : '<div class="ph"><img data-th="' + esc(x.u) + '" alt=""></div>';
+            }).join('') + '</div>' +
+            '<div class="chips">' + names.map(function (g, gi) { return '<button class="chip" data-oc="' + ci + '" data-og="' + gi + '">' + esc(g) + '</button>'; }).join('') +
+            '<button class="chip" data-oc="' + ci + '" data-og="-1">🗑 Ignorer</button></div></div>';
+        }).join('') + '</div>' : '') +
       '<div class="card"><div class="sec"><b>1 · Autorisations</b></div>' +
       step(st.notif, 1, 'Lire les notifications WhatsApp', 'Pour savoir quel groupe envoie une photo ou un PDF.', 'Activer', 'bNotif') +
       (!st.notif && st.sdk >= 33 ? '<div class="note info small">Si Android dit « Paramètre restreint » : <a href="#" id="bInfo">Infos de l\'appli</a> → ⋮ en haut → <b>Autoriser les paramètres restreints</b>, puis réessayez.</div>' : '') +
@@ -982,6 +998,14 @@
       b.onclick = function () { var g = names[+b.getAttribute('data-gd')]; confirmBox('Retirer ce groupe ?', g, 'Retirer').then(function (ok) { if (ok) { delete groups[g]; saveGroups(); } }); };
     });
     $$('[data-gs]').forEach(function (b) { b.onclick = function () { addGroup(st.seen[+b.getAttribute('data-gs')].name); }; });
+    $$('[data-oc]').forEach(function (b) {
+      b.onclick = function () {
+        var c = clusters[+b.getAttribute('data-oc')], gi = +b.getAttribute('data-og');
+        NATIVE.botAssignOrphans(JSON.stringify(c.items.map(function (x) { return x.u; })), gi >= 0 ? names[gi] : '');
+        toast(gi >= 0 ? '✓ Envoyé avec « ' + names[gi] + ' »' : 'Ignoré', 'ok'); render();
+      };
+    });
+    $$('img[data-th]').forEach(function (im) { nat('botThumb', im.getAttribute('data-th')).then(function (r) { if (r.src) im.src = r.src; }); });
     var saveBlocked = function () { NATIVE.botSetBlocked(JSON.stringify(blocked)); render(); };
     $('#bNumAdd').onclick = function () {
       var v = $('#bNum').value.trim(); if (!v) return;

@@ -121,6 +121,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Android 8–10 : autorisation de lire le dossier WhatsApp (bot téléphone). */
+    /** Android 13+ : autorisation d'afficher la notification « photos sans groupe ». */
+    private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     /** Choix du dossier WhatsApp Business (une seule fois ; Android le partage avec l'app, sans « accès à tous les fichiers »). */
     private val pickTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -206,6 +209,10 @@ class MainActivity : ComponentActivity() {
         io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)); DocStore.cleanup(this) }
         if (OpQueue.list(this).isNotEmpty()) SyncWorker.schedule(this)
         // Bot téléphone : seulement dans l'app « SONICOD Bot » (l'app des agents n'a pas d'accès aux notifications)
+        if (BuildConfig.BOT && android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+            try { notifPerm.launch("android.permission.POST_NOTIFICATIONS") } catch (e: Exception) {}
+        }
         if (BuildConfig.BOT && WaBot.isEnabled(this)) BotWorker.schedulePeriodic(this)
         else WorkManager.getInstance(this).cancelUniqueWork("wabot-periodic")
     }
@@ -214,6 +221,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleShare(intent)
+        if (intent.getStringExtra("route") == "bot") webView.evaluateJavascript("window.sonicodOpen && window.sonicodOpen('bot')", null)
     }
 
     /** « Partager → SONICOD » depuis WhatsApp : on importe les photos et on garde le texte. */
@@ -433,6 +441,12 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun botSetEnabled(on: Boolean) = WaBot.setEnabled(this@MainActivity, on)
+
+        @JavascriptInterface
+        fun botAssignOrphans(urisJson: String, group: String) { try { WaBot.assignOrphans(this@MainActivity, JSONArray(urisJson), group) } catch (e: Exception) {} }
+
+        @JavascriptInterface
+        fun botThumb(cb: String, uri: String) { io.execute { reply(cb, JSONObject().put("ok", true).put("src", WaBot.thumb(this@MainActivity, uri))) } }
 
         @JavascriptInterface
         fun botSetBlocked(json: String) { try { WaBot.setBlocked(this@MainActivity, JSONArray(json)) } catch (e: Exception) {} }

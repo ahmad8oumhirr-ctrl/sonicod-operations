@@ -265,3 +265,9 @@ select.input{-webkit-appearance:none;appearance:none;padding-right:36px;
 .pal{flex:1;margin:4px;border:2px solid var(--line);border-radius:12px;padding:8px;background:var(--card);text-align:center;font-weight:700;font-size:13px;color:var(--ink)}
 .pal.on{border-color:var(--brand)}
 .pal i{display:block;height:34px;border-radius:8px;margin-bottom:6px}
+
+.orph{padding:10px 0;border-top:1px solid var(--line)}
+.orph:first-of-type{border-top:0}
+.orph .photos{margin:8px 0}
+.ph.doc{display:grid;place-items:center;font-size:26px;background:var(--brand-50);text-align:center}
+.ph.doc span{display:block;font-size:9px;line-height:1.1;word-break:break-all;padding:0 3px}

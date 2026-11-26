@@ -86,6 +86,7 @@ object WaBot {
 
     fun setEnabled(ctx: Context, on: Boolean) {
         if (!BuildConfig.BOT) return
+        if (on) edit(ctx) { if (!it.has("since")) it.put("since", System.currentTimeMillis()) }
         edit(ctx) { it.put("enabled", on) }
         if (on) { BotWorker.schedulePeriodic(ctx); BotWorker.kick(ctx) } else { WorkManager.getInstance(ctx).cancelUniqueWork("wabot-periodic") }
     }
@@ -122,7 +123,50 @@ object WaBot {
 
     /* Dossier WhatsApp choisi UNE fois par l'utilisateur (Android le partage avec l'app) : pas d'« accès à tous les fichiers ». */
     fun treeUri(ctx: Context): android.net.Uri? = synchronized(lock) { load(ctx).optString("tree").takeIf { it.isNotEmpty() }?.let { android.net.Uri.parse(it) } }
-    fun setTree(ctx: Context, uri: android.net.Uri) { edit(ctx) { it.put("tree", uri.toString()).remove("dirs") } }
+    fun setTree(ctx: Context, uri: android.net.Uri) { edit(ctx) { it.put("tree", uri.toString()).remove("dirs"); if (!it.has("since")) it.put("since", System.currentTimeMillis()) } }
+
+    /** Photos sans notification : l'utilisateur choisit le groupe (elles passent ensuite comme les autres). */
+    fun assignOrphans(ctx: Context, uris: JSONArray, group: String) {
+        edit(ctx) { o ->
+            val orph = o.optJSONArray("orphans") ?: JSONArray()
+            val ev = o.arr("events"); val done = o.obj("orphanDone")
+            val want = (0 until uris.length()).map { uris.getString(it) }.toSet()
+            val keep = JSONArray()
+            for (i in 0 until orph.length()) {
+                val x = orph.getJSONObject(i); val u = x.optString("u")
+                if (u in want) {
+                    if (group.isNotEmpty()) ev.put(JSONObject().put("id", "orph|$u").put("g", group).put("t", x.optLong("t")).put("k", x.optString("k")).put("n", x.optString("n"))
+                        .put("f", u).put("fn", x.optString("n")).put("s", "").put("su", "").put("cap", ""))
+                    done.put(u, System.currentTimeMillis())
+                } else keep.put(x)
+            }
+            o.put("orphans", keep)
+            if (done.length() > 600) done.keys().asSequence().toList().sortedBy { done.optLong(it) }.take(done.length() - 500).forEach { done.remove(it) }
+        }
+        if (group.isNotEmpty()) BotWorker.kick(ctx)
+    }
+
+    private fun notifyOrphans(ctx: Context, n: Int) {
+        try {
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(android.app.NotificationChannel("orphans", "Photos sans groupe", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+            val pi = android.app.PendingIntent.getActivity(ctx, 7, android.content.Intent(ctx, MainActivity::class.java).putExtra("route", "bot").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+            val nb = androidx.core.app.NotificationCompat.Builder(ctx, "orphans").setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("⚠ $n photo(s) sans groupe").setContentText("Reçues sans notification WhatsApp : appuyez pour choisir le groupe.")
+                .setContentIntent(pi).setAutoCancel(true)
+            nm.notify(77, nb.build())
+        } catch (e: Exception) {}
+    }
+
+    /** Petite image (data URL) pour afficher une photo sans groupe. */
+    fun thumb(ctx: Context, uri: String): String = try {
+        val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        open(ctx, uri)?.use { BitmapFactory.decodeStream(it, null, b) }
+        var sm = 1; while (b.outWidth / (sm * 2) >= 220 && b.outHeight / (sm * 2) >= 220) sm *= 2
+        val bmp = open(ctx, uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sm }) }
+        if (bmp == null) "" else { val out = java.io.ByteArrayOutputStream(); bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out); bmp.recycle(); "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP) }
+    } catch (e: Exception) { "" }
 
     fun hasFilesAccess(ctx: Context): Boolean {
         if (testMode(ctx) && testRoot(ctx).isDirectory) return true
@@ -148,6 +192,7 @@ object WaBot {
             .put("whatsappFolder", roots.isNotEmpty())
             .put("groups", groups)
             .put("blocked", o.optJSONArray("blocked") ?: JSONArray())
+            .put("orphans", o.optJSONArray("orphans") ?: JSONArray())
             .put("senders", JSONArray().also { arr ->
                 o.optJSONObject("senders")?.let { so -> so.keys().asSequence().map { so.getJSONObject(it) }.sortedByDescending { it.optLong("t") }.take(30).forEach { arr.put(it) } }
             })
@@ -163,6 +208,13 @@ object WaBot {
     }
 
     /* ---------------- notifications WhatsApp ---------------- */
+
+    /** « 2 colis retour », « 3 sacs », « 4 kartonat » écrit avec la photo → nombre de colis de cette photo. */
+    fun captionCount(cap: String?): Int? {
+        if (cap.isNullOrBlank()) return null
+        val m = Regex("(\\d{1,3})\\s*(?:colis|coli|kolis|koli|sacs?|cartons?|kartona|kartonat|cartonat|pi[eè]ces?|paquets?|mika)", RegexOption.IGNORE_CASE).find(cap) ?: return null
+        return m.groupValues[1].toIntOrNull()?.takeIf { it in 1..500 }
+    }
 
     private val COUNT_SUFFIX = Regex("""\s*\(\d+\s+[^)]*\)\s*$""")
     private val PHOTO_RE = Regex("""^\s*📷""")
@@ -215,7 +267,8 @@ object WaBot {
                 val id = "$group|$t|$kind|$name"
                 if (id in keys) continue
                 keys.add(id)
-                ev.put(JSONObject().put("id", id).put("g", group).put("t", t).put("k", kind).put("n", name).put("s", sName).put("su", sId))
+                val cap = if (kind == "img") PHOTO_RE.replace(text, "").trim().removePrefix("Photo").trim() else ""
+                ev.put(JSONObject().put("id", id).put("g", group).put("t", t).put("k", kind).put("n", name).put("s", sName).put("su", sId).put("cap", cap))
                 if (sName.isNotEmpty() || sId.isNotEmpty()) o.obj("senders").put((sName + "|" + sId).take(120), JSONObject().put("n", sName).put("u", sId).put("g", group).put("t", t))
                 added++
             }
@@ -377,17 +430,19 @@ object WaBot {
      * le même n° de ticket sur 2 photos = 1 colis. NE COMPTENT PAS : petites commandes dont le ticket porte un prix (DH),
      * et l'étiquette « BON RETOUR » (son nombre est gardé dans la note).
      */
-    fun countColis(reads: List<Label?>, nPhotos: Int): Count {
+    fun countColis(reads: List<Label?>, nPhotos: Int, caps: List<Int?> = emptyList()): Count {
         val brvs = LinkedHashMap<String, Int>()
-        val tracks = HashSet<String>()
-        var labels = 0; var small = 0; var withTrack = 0
-        for (d in reads) {
-            if (d == null) continue
-            if (d.label) { labels++; if (d.colis != null) { val k = d.brv.ifEmpty { "n" + d.colis }; brvs[k] = maxOf(brvs[k] ?: 0, d.colis) }; continue }
-            if (d.ticket) { small++; continue }
-            if (d.tracks.isNotEmpty()) { withTrack++; tracks.addAll(d.tracks) }
+        val seen = HashSet<String>()
+        var small = 0; var colis = 0
+        reads.forEachIndexed { i, d ->
+            val cap = caps.getOrNull(i)
+            if (d != null && d.label) { if (d.colis != null) { val k = d.brv.ifEmpty { "n" + d.colis }; brvs[k] = maxOf(brvs[k] ?: 0, d.colis) }; return@forEachIndexed }
+            if (d != null && d.ticket) { small++; return@forEachIndexed }                        // petite commande avec prix
+            if (d != null && d.tracks.isNotEmpty() && d.tracks.all { it in seen }) return@forEachIndexed   // même colis déjà compté
+            d?.tracks?.let { seen.addAll(it) }
+            colis += cap ?: 1                                                                    // « 2 colis retour » écrit avec la photo
         }
-        val colis = tracks.size + maxOf(0, nPhotos - labels - small - withTrack)
+        colis += maxOf(0, nPhotos - reads.size)
         val lab = if (brvs.isEmpty()) null else brvs.values.sum()
         return Count(colis, "$colis colis" + (if (small > 0) " · $small petite(s) commande(s) avec prix non comptée(s)" else "") + (if (lab != null) " · étiquette : $lab" else ""), brvs, small)
     }
@@ -407,6 +462,7 @@ object WaBot {
         val imgs = mediaFiles(ctx, "img")
         val docs = mediaFiles(ctx, "doc")
 
+        var newOrphans = 0
         // 1) relier chaque notification à son fichier
         val (groups, records) = synchronized(lock) {
             val o = load(ctx)
@@ -429,6 +485,18 @@ object WaBot {
                 else if (now - t > 6 * 3600_000) e.put("x", true)   // jamais téléchargé (téléchargement auto désactivé ?)
             }
             o.put("events", JSONArray(list))
+
+            // 1b) photos / PDF arrivés SANS notification (téléphone éteint, groupe ouvert, notification ratée…)
+            val since = maxOf(o.optLong("since", now), now - 3 * DAY)
+            val done = o.optJSONObject("orphanDone") ?: JSONObject()
+            val orph = JSONArray()
+            for (f in imgs + docs) {
+                if (f.uri in claimed || done.has(f.uri) || f.mtime < since || now - f.mtime < 90_000) continue
+                orph.put(JSONObject().put("u", f.uri).put("n", f.name).put("t", f.mtime).put("k", if (f in docs) "doc" else "img"))
+            }
+            val before = o.optJSONArray("orphans")?.length() ?: 0
+            o.put("orphans", orph)
+            if (orph.length() > before) newOrphans = orph.length()
             save(ctx, o)
 
             // 2) regrouper par groupe retour + jour
@@ -443,9 +511,11 @@ object WaBot {
                 val r = recs.getOrPut(key) { JSONObject().put("key", key).put("g", g).put("day", day).put("ville", ville).put("img", JSONArray()).put("doc", JSONArray()) }
                 r.getJSONArray(if (e.optString("k") == "doc") "doc" else "img").put(path)
                 r.obj("names").put(path, e.optString("fn").ifEmpty { android.net.Uri.decode(path).substringAfterLast('/') })
+                captionCount(e.optString("cap"))?.let { r.obj("caps").put(path, it) }
             }
             groups to recs.values.toList()
         }
+        if (newOrphans > 0) { log(ctx, "⚠ $newOrphans photo(s)/PDF reçus sans notification : choisissez le groupe"); notifyOrphans(ctx, newOrphans) }
         if (groups.length() == 0) { log(ctx, "Aucun groupe retour configuré"); return res.put("ok", true).put("sent", 0) }
 
         // 3) lire les étiquettes et envoyer
@@ -491,7 +561,8 @@ object WaBot {
             reads.add(lab)
         }
         if (newOcr.length() > 0) edit(ctx) { o -> val c = o.obj("ocr"); newOcr.keys().forEach { c.put(it, newOcr.get(it)) }; while (c.length() > 400) c.remove(c.keys().next()) }
-        val cnt = countColis(reads, imgs.length())
+        val capsObj = r.optJSONObject("caps") ?: JSONObject()
+        val cnt = countColis(reads, imgs.length(), (0 until imgs.length()).map { i -> capsObj.optInt(imgs.getString(i), 0).takeIf { it > 0 } })
         val colis = cnt.colis
         val source = cnt.source
         val brvs = cnt.brvs
