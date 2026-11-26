@@ -338,22 +338,19 @@ object WaBot {
      *  3) sinon 1 photo = 1 colis, et le même n° de suivi sur 2 photos = 1 colis.
      */
     fun countColis(reads: List<Label?>, nPhotos: Int): Count {
+        // Règle SONICOD : 1 photo = 1 colis (le même n° de suivi sur 2 photos ne compte qu'une fois) ;
+        // le nombre écrit sur l'étiquette « BON RETOUR » est gardé en information dans la note.
         val brvs = LinkedHashMap<String, Int>()
-        val loose = LinkedHashSet<Int>()
         val tracks = HashSet<String>()
-        var unread = 0; var withTrack = 0; var labelsRead = 0
+        var withTrack = 0
         for (d in reads) {
             if (d == null) continue
-            if (d.label && d.colis != null) { labelsRead++; if (d.brv.isNotEmpty()) brvs[d.brv] = maxOf(brvs[d.brv] ?: 0, d.colis) else loose.add(d.colis) }
-            else if (d.label) unread++
-            else if (d.tracks.isNotEmpty()) { withTrack++; tracks.addAll(d.tracks) }
+            if (d.label && d.colis != null) { val k = d.brv.ifEmpty { "n" + d.colis }; brvs[k] = maxOf(brvs[k] ?: 0, d.colis) }
+            if (d.tracks.isNotEmpty()) { withTrack++; tracks.addAll(d.tracks) }
         }
-        loose.forEach { n -> if (n !in brvs.values) brvs["n$n"] = n }
-        if (brvs.isNotEmpty()) return Count(brvs.values.sum(), "étiquette", brvs)
-        if (unread > 0) return Count(null, "étiquette illisible – à vérifier", brvs)
-        val n = tracks.size + maxOf(0, nPhotos - withTrack - labelsRead)
-        if (n == 0) return Count(null, "", brvs)
-        return Count(n, "compté : $n colis" + (if (n != nPhotos) " sur $nPhotos photo(s)" else " ($nPhotos photo(s))"), brvs)
+        val n = tracks.size + maxOf(0, nPhotos - withTrack)
+        val lab = if (brvs.isEmpty()) null else brvs.values.sum()
+        return Count(if (n > 0) n else null, "$n photo(s)" + (if (lab != null) " · étiquette : $lab" else ""), brvs)
     }
 
     /** Même identifiant que le bot Chrome (« wa- » + hash de « groupe|jour ») : une seule ligne par groupe et par jour. */
