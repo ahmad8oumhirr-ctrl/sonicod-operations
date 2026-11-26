@@ -11,8 +11,8 @@ android {
         applicationId = "ma.sonicod.operations"
         minSdk = 26
         targetSdk = 34
-        versionCode = 27
-        versionName = "4.10.0"
+        versionCode = 28
+        versionName = "4.10.1"
     }
 
     // Deux applications : « Gestion Retour » (agents) et « SONICOD Bot » (téléphone du responsable : lit les notifications WhatsApp)

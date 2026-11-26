@@ -188,6 +188,7 @@
     let extra = 0;   // albums : WhatsApp montre 4 photos et « +3 » pour les autres
     const seenImg = new Set();
     let nMsg = 0, skippedBlocked = 0;
+    let burst = 0, lastImgSender = null, prevWasImg = false;   // « envoi » = photos à la suite du même expéditeur
     items.forEach(it => {
       if (it.type !== 'msg') return;
       nMsg++;
@@ -196,6 +197,13 @@
       const box = it.row;
       const mid = it.el.getAttribute('data-id') || '';
       const capN = captionCount(box.innerText || '');      // « 2 colis retour » écrit avec la photo
+      const hasImg = !!box.querySelector('img[src^="blob:"]');
+      if (hasImg) {
+        const who = it.num || it.sender || '';
+        if (!prevWasImg || (who && lastImgSender && who !== lastImgSender)) burst++;
+        if (who) lastImgSender = who;
+      }
+      prevWasImg = hasImg;
       let k = 0;
       box.querySelectorAll('img').forEach(img => {
         if (seenImg.has(img)) return;
@@ -205,6 +213,7 @@
         if (img.closest('header')) return;
         seenImg.add(img);
         img.__sncCap = k === 0 ? capN : null;
+        img.__sncBurst = burst;
         img.__sncId = mid ? 'wa:' + mid + '#' + (k++) : '';   // identifiant WhatsApp du message : le même à chaque lecture
         imgs.push(img);
       });
@@ -329,7 +338,7 @@
       try { b64 = imgToB64(imgs[i]); } catch (e) { continue; }
       const ph = hash(b64.slice(0, 4000) + b64.length);
       const pid = imgs[i].__sncId || ('h:' + ph);
-      rec.raw.push({ b64, ph, cap: imgs[i].__sncCap || null });
+      rec.raw.push({ b64, ph, cap: imgs[i].__sncCap || null, burst: imgs[i].__sncBurst || 0 });
       if (rec.photos.length < 10) { rec.photos.push(b64); rec.photoHashes.push(ph); rec.photoIds.push(pid); }
     }
     for (const d of docs.slice(0, 3)) {
@@ -372,9 +381,9 @@
       const keys = Object.keys(c2); if (keys.length > 500) keys.slice(0, keys.length - 400).forEach(k => delete c2[k]);
       await store.set('ocr', c2);
     }
-    const rawN = rec.raw.length, rawCaps = rec.raw.map(x => x.cap);
+    const rawN = rec.raw.length, rawCaps = rec.raw.map(x => x.cap), rawBursts = rec.raw.map(x => x.burst);
     delete rec.raw;
-    const c = countColis(Array.from({ length: rawN }, (_, i) => reads[i] || null), rec.nPhotos, rawCaps);
+    const c = countColis(Array.from({ length: rawN }, (_, i) => reads[i] || null), rec.nPhotos, rawCaps, rawBursts);
     rec.colis = c.colis; rec.commandes = c.commandes; rec.source = c.source; rec.brvs = c.brvs;
     if (!rec.livreur) rec.livreur = guessCity(rec.group, rec.zone, (await store.get('groups')) || {});
     log(rec.group + ' : ' + rec.photos.length + ' photo(s), ' + rec.docs.length + ' PDF → ' + rec.source + '.');
@@ -396,20 +405,24 @@
    *  - NE COMPTENT PAS : les petites commandes (petit carton / sachet de commerce) dont le ticket porte un PRIX (DH) ;
    *  - l'étiquette « BON RETOUR » ne compte pas (son nombre est gardé dans la note).
    */
-  function countColis(reads, nPhotos, caps) {
-    const brvs = {}, seen = {};
+  function countColis(reads, nPhotos, caps, bursts) {
+    // un « envoi » (photos à la suite du même expéditeur) avec « 2 colis » écrit compte 2 ; sinon 1 photo = 1 colis
+    const brvs = {}, seen = {}, burstCap = {};
     let small = 0, colis = 0;
+    const bOf = i => (bursts && bursts[i] != null ? bursts[i] : 'p' + i);
+    reads.forEach((d, i) => { const c = caps ? caps[i] : null; if (c && !(d && d.ticket)) burstCap[bOf(i)] = (burstCap[bOf(i)] || 0) + c; });
     reads.forEach((d, i) => {
-      const cap = caps ? caps[i] : null;
       if (d && d.label) { if (d.colis != null) { const k = d.brv || ('n' + d.colis); brvs[k] = Math.max(brvs[k] || 0, d.colis); } return; }
       if (d && d.ticket) { small++; return; }                                     // petite commande avec prix
       if (d && d.tracks && d.tracks.length && d.tracks.every(t => seen[t])) return; // même colis déjà compté
       if (d && d.tracks) d.tracks.forEach(t => { seen[t] = 1; });
-      colis += cap || 1;                                                          // « 2 colis retour » écrit avec la photo
+      if (burstCap[bOf(i)] != null) return;                                       // compté par le nombre écrit
+      colis += 1;
     });
-    colis += Math.max(0, nPhotos - reads.length);
+    const written = Object.values(burstCap).reduce((a, b) => a + b, 0);
+    colis += written + Math.max(0, nPhotos - reads.length);
     const lab = Object.keys(brvs).length ? Object.values(brvs).reduce((a, b) => a + b, 0) : null;
-    return { colis, commandes: small, source: colis + ' colis' + (small ? ' · ' + small + ' petite(s) commande(s) avec prix non comptée(s)' : '') + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
+    return { colis, commandes: small, source: colis + ' colis' + (written ? ' (nombre écrit)' : '') + (small ? ' · ' + small + ' petite(s) commande(s) avec prix non comptée(s)' : '') + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
   }
 
   /** Lire le groupe ouvert. */

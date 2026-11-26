@@ -264,11 +264,16 @@ object WaBot {
                 if (d != null) { kind = "doc"; name = d.groupValues[1].trim() }
                 else if (PHOTO_RE.containsMatchIn(text)) kind = "img"
                 else continue
-                val id = "$group|$t|$kind|$name"
-                if (id in keys) continue
-                keys.add(id)
-                val cap = if (kind == "img") PHOTO_RE.replace(text, "").trim().removePrefix("Photo").trim() else ""
-                ev.put(JSONObject().put("id", id).put("g", group).put("t", t).put("k", kind).put("n", name).put("s", sName).put("su", sId).put("cap", cap))
+                val capRaw = if (kind == "img") PHOTO_RE.replace(text, "").trim() else ""
+                // « 📷 3 photos » (envoi de plusieurs photos d'un coup) = 3 photos
+                val many = if (kind == "img") Regex("^(\\d{1,2})\\s*(?:photos?|images?|médias?|medias?)$", RegexOption.IGNORE_CASE).find(capRaw)?.groupValues?.get(1)?.toIntOrNull() else null
+                val cap = if (many != null) "" else capRaw.removePrefix("Photo").trim()
+                for (k in 0 until (many ?: 1).coerceIn(1, 30)) {
+                    val id = "$group|$t|$kind|$name" + (if (k > 0) "#$k" else "")
+                    if (id in keys) continue
+                    keys.add(id)
+                    ev.put(JSONObject().put("id", id).put("g", group).put("t", t).put("k", kind).put("n", name).put("s", sName).put("su", sId).put("cap", if (k == 0) cap else ""))
+                }
                 if (sName.isNotEmpty() || sId.isNotEmpty()) o.obj("senders").put((sName + "|" + sId).take(120), JSONObject().put("n", sName).put("u", sId).put("g", group).put("t", t))
                 added++
             }
@@ -430,21 +435,28 @@ object WaBot {
      * le même n° de ticket sur 2 photos = 1 colis. NE COMPTENT PAS : petites commandes dont le ticket porte un prix (DH),
      * et l'étiquette « BON RETOUR » (son nombre est gardé dans la note).
      */
-    fun countColis(reads: List<Label?>, nPhotos: Int, caps: List<Int?> = emptyList()): Count {
+    /**
+     * bursts[i] = numéro de l'« envoi » de la photo i (photos envoyées ensemble). Si un envoi porte « 2 colis » écrit,
+     * c'est ce nombre qui compte pour tout l'envoi ; sinon 1 photo = 1 colis.
+     */
+    fun countColis(reads: List<Label?>, nPhotos: Int, caps: List<Int?> = emptyList(), bursts: List<Int> = emptyList()): Count {
         val brvs = LinkedHashMap<String, Int>()
         val seen = HashSet<String>()
         var small = 0; var colis = 0
+        val burstCap = HashMap<Int, Int>()
+        reads.indices.forEach { i -> val c = caps.getOrNull(i); if (c != null && reads[i]?.ticket != true) { val b = bursts.getOrElse(i) { -1 - i }; burstCap[b] = (burstCap[b] ?: 0) + c } }
         reads.forEachIndexed { i, d ->
-            val cap = caps.getOrNull(i)
             if (d != null && d.label) { if (d.colis != null) { val k = d.brv.ifEmpty { "n" + d.colis }; brvs[k] = maxOf(brvs[k] ?: 0, d.colis) }; return@forEachIndexed }
             if (d != null && d.ticket) { small++; return@forEachIndexed }                        // petite commande avec prix
             if (d != null && d.tracks.isNotEmpty() && d.tracks.all { it in seen }) return@forEachIndexed   // même colis déjà compté
             d?.tracks?.let { seen.addAll(it) }
-            colis += cap ?: 1                                                                    // « 2 colis retour » écrit avec la photo
+            if (burstCap.containsKey(bursts.getOrElse(i) { -1 - i })) return@forEachIndexed          // compté par le nombre écrit
+            colis += 1
         }
+        colis += burstCap.values.sum()
         colis += maxOf(0, nPhotos - reads.size)
         val lab = if (brvs.isEmpty()) null else brvs.values.sum()
-        return Count(colis, "$colis colis" + (if (small > 0) " · $small petite(s) commande(s) avec prix non comptée(s)" else "") + (if (lab != null) " · étiquette : $lab" else ""), brvs, small)
+        return Count(colis, "$colis colis" + (if (burstCap.isNotEmpty()) " (nombre écrit)" else "") + (if (small > 0) " · $small petite(s) commande(s) avec prix non comptée(s)" else "") + (if (lab != null) " · étiquette : $lab" else ""), brvs, small)
     }
 
     /** Même identifiant que le bot Chrome (« wa- » + hash de « groupe|jour ») : une seule ligne par groupe et par jour. */
@@ -463,13 +475,14 @@ object WaBot {
         val docs = mediaFiles(ctx, "doc")
 
         var newOrphans = 0
+        var autoAssigned = 0
         // 1) relier chaque notification à son fichier
         val (groups, records) = synchronized(lock) {
             val o = load(ctx)
             val groups = o.optJSONObject("groups") ?: JSONObject()
             val claimed = HashSet<String>()
             val ev = o.optJSONArray("events") ?: JSONArray()
-            val list = (0 until ev.length()).map { ev.getJSONObject(it) }.sortedBy { it.optLong("t") }
+            val list = (0 until ev.length()).map { ev.getJSONObject(it) }.sortedBy { it.optLong("t") }.toMutableList()
             list.forEach { e -> e.optString("f").takeIf { it.isNotEmpty() }?.let { claimed.add(it) } }
             for (e in list) {
                 if (e.has("f") || e.optBoolean("x")) continue
@@ -494,6 +507,24 @@ object WaBot {
                 if (f.uri in claimed || done.has(f.uri) || f.mtime < since || now - f.mtime < 90_000) continue
                 orph.put(JSONObject().put("u", f.uri).put("n", f.name).put("t", f.mtime).put("k", if (f in docs) "doc" else "img"))
             }
+            // rattachement automatique : photo sans notification arrivée (±5 min) au milieu des photos d'UN SEUL groupe suivi
+            val fileTime = HashMap<String, Long>(); (imgs + docs).forEach { fileTime[it.uri] = it.mtime }
+            val matched = list.filter { it.optString("f").isNotEmpty() && fileTime.containsKey(it.optString("f")) }
+            val keepOrph = JSONArray()
+            var autoN = 0
+            for (i in 0 until orph.length()) {
+                val x = orph.getJSONObject(i); val t0 = x.optLong("t")
+                val near = matched.filter { Math.abs((fileTime[it.optString("f")] ?: 0L) - t0) <= 5 * 60_000 }.map { it.optString("g") }.toSet()
+                val g = near.singleOrNull()
+                if (g != null && g.isNotEmpty() && matchGroup(groups, g) != null) {
+                    val e = JSONObject().put("id", "orph|" + x.optString("u")).put("g", g).put("t", t0).put("k", x.optString("k")).put("n", x.optString("n"))
+                        .put("f", x.optString("u")).put("fn", x.optString("n")).put("s", "").put("su", "").put("cap", "").put("auto", true)
+                    list.add(e); claimed.add(x.optString("u")); autoN++
+                } else keepOrph.put(x)
+            }
+            if (autoN > 0) { o.put("events", JSONArray(list)); autoAssigned = autoN }
+            orph.let { while (it.length() > 0) it.remove(0) }
+            for (i in 0 until keepOrph.length()) orph.put(keepOrph.get(i))
             val before = o.optJSONArray("orphans")?.length() ?: 0
             o.put("orphans", orph)
             if (orph.length() > before) newOrphans = orph.length()
@@ -512,9 +543,11 @@ object WaBot {
                 r.getJSONArray(if (e.optString("k") == "doc") "doc" else "img").put(path)
                 r.obj("names").put(path, e.optString("fn").ifEmpty { android.net.Uri.decode(path).substringAfterLast('/') })
                 captionCount(e.optString("cap"))?.let { r.obj("caps").put(path, it) }
+                r.obj("meta").put(path, JSONObject().put("t", e.optLong("t")).put("s", e.optString("s")))
             }
             groups to recs.values.toList()
         }
+        if (autoAssigned > 0) log(ctx, "↺ $autoAssigned photo(s) sans notification rattachée(s) automatiquement à leur groupe")
         if (newOrphans > 0) { log(ctx, "⚠ $newOrphans photo(s)/PDF reçus sans notification : choisissez le groupe"); notifyOrphans(ctx, newOrphans) }
         if (groups.length() == 0) { log(ctx, "Aucun groupe retour configuré"); return res.put("ok", true).put("sent", 0) }
 
@@ -562,7 +595,16 @@ object WaBot {
         }
         if (newOcr.length() > 0) edit(ctx) { o -> val c = o.obj("ocr"); newOcr.keys().forEach { c.put(it, newOcr.get(it)) }; while (c.length() > 400) c.remove(c.keys().next()) }
         val capsObj = r.optJSONObject("caps") ?: JSONObject()
-        val cnt = countColis(reads, imgs.length(), (0 until imgs.length()).map { i -> capsObj.optInt(imgs.getString(i), 0).takeIf { it > 0 } })
+        val meta = r.optJSONObject("meta") ?: JSONObject()
+        // envois : photos du même expéditeur à moins de 10 min d'écart
+        val order = (0 until imgs.length()).sortedBy { meta.optJSONObject(imgs.getString(it))?.optLong("t") ?: 0L }
+        val burst = IntArray(imgs.length()); var bId = 0; var lastT = -1L; var lastS = ""
+        for (i in order) {
+            val m = meta.optJSONObject(imgs.getString(i)); val t = m?.optLong("t") ?: 0L; val sd = m?.optString("s") ?: ""
+            if (lastT >= 0 && (t - lastT > 10 * 60_000 || (sd.isNotEmpty() && lastS.isNotEmpty() && sd != lastS))) bId++
+            burst[i] = bId; lastT = t; if (sd.isNotEmpty()) lastS = sd
+        }
+        val cnt = countColis(reads, imgs.length(), (0 until imgs.length()).map { i -> capsObj.optInt(imgs.getString(i), 0).takeIf { it > 0 } }, burst.toList())
         val colis = cnt.colis
         val source = cnt.source
         val brvs = cnt.brvs
