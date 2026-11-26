@@ -121,6 +121,16 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Android 8–10 : autorisation de lire le dossier WhatsApp (bot téléphone). */
+    /** Choix du dossier WhatsApp Business (une seule fois ; Android le partage avec l'app, sans « accès à tous les fichiers »). */
+    private val pickTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) {}
+            WaBot.setTree(this, uri)
+            io.execute { val ok = WaBot.hasFilesAccess(this); runOnUiThread { Toast.makeText(this, if (ok) "Dossier WhatsApp enregistré ✓" else "Choisissez le dossier com.whatsapp.w4b", Toast.LENGTH_LONG).show() } }
+        }
+        webView.evaluateJavascript("window.sonicodBotRefresh && window.sonicodBotRefresh()", null)
+    }
+
     private val storagePerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         webView.evaluateJavascript("window.sonicodBotRefresh && window.sonicodBotRefresh()", null)
     }
@@ -195,7 +205,9 @@ class MainActivity : ComponentActivity() {
         handleShare(intent)
         io.execute { PhotoStore.cleanup(this, OpQueue.photoIdsInQueue(this)); DocStore.cleanup(this) }
         if (OpQueue.list(this).isNotEmpty()) SyncWorker.schedule(this)
-        WorkManager.getInstance(this).cancelUniqueWork("wabot-periodic")   // ancien bot téléphone (retiré : bloqué par Play Protect)
+        // Bot téléphone : seulement dans l'app « SONICOD Bot » (l'app des agents n'a pas d'accès aux notifications)
+        if (BuildConfig.BOT && WaBot.isEnabled(this)) BotWorker.schedulePeriodic(this)
+        else WorkManager.getInstance(this).cancelUniqueWork("wabot-periodic")
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -297,6 +309,7 @@ class MainActivity : ComponentActivity() {
             .put("name", Session.name(this@MainActivity))
             .put("version", BuildConfig.VERSION_NAME)
             .put("whatsapp", whatsappPackage() != null)
+            .put("bot", BuildConfig.BOT)
             .put("systemDark", (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
             .toString()
 
@@ -416,7 +429,7 @@ class MainActivity : ComponentActivity() {
         /** Renvoie (une seule fois) le contenu partagé depuis WhatsApp, ou "". */
         /* ---------- Bot WhatsApp du téléphone ---------- */
         @JavascriptInterface
-        fun botStatusDisabled(): String = WaBot.status(this@MainActivity).toString()
+        fun botStatus(): String = if (BuildConfig.BOT) WaBot.status(this@MainActivity).toString() else ""
 
         @JavascriptInterface
         fun botSetEnabled(on: Boolean) = WaBot.setEnabled(this@MainActivity, on)
@@ -431,13 +444,9 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun botOpenFiles() = runOnUiThread {
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
-                try {
-                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
-                } catch (e: Exception) {
-                    try { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } catch (e2: Exception) { openAppInfo() }
-                }
-            } else storagePerm.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            // s'ouvre directement sur Android/media/com.whatsapp.w4b : il suffit d'appuyer sur « Utiliser ce dossier »
+            val start = android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Android/media/com.whatsapp.w4b")
+            try { pickTree.launch(start) } catch (e: Exception) { try { pickTree.launch(null) } catch (e2: Exception) {} }
         }
 
         @JavascriptInterface

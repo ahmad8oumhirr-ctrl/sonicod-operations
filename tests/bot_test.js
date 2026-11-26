@@ -17,16 +17,15 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   const js = async e => { const r = await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true }); return r.result.exceptionDetails ? 'ERREUR ' + JSON.stringify(r.result.exceptionDetails) : r.result.result.value; };
   const natRun = () => js(`new Promise(function(res){var id='t'+Date.now();var o=window.__nativeCb;window.__nativeCb=function(i,j){if(i===id){window.__nativeCb=o;res(j);}else o(i,j);};SonicodNative.botRun(id);})`);
 
-  const P = 'ma.sonicod.operations';
-  log('autorisation notifications:', sh(`adb shell cmd notification allow_listener ${P}/${P}.WaListener`) || 'ok');
-  log('autorisation fichiers:', sh(`adb shell appops set ${P} MANAGE_EXTERNAL_STORAGE allow`) || 'ok');
+  const P = 'ma.sonicod.operations.bot';
+  log('autorisation notifications:', sh(`adb shell cmd notification allow_listener ${P}/ma.sonicod.operations.WaListener`) || 'ok');
   await js(`SonicodNative.botTestMode(true)`);
   await js(`SonicodNative.botSetGroups(JSON.stringify({'Retour CASA Sonicod':'CASA'}))`);
   await wait(3000);
   let st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('statut:', { notif: st.notif, files: st.files, dossierWhatsApp: st.whatsappFolder });
 
-  const D = '/sdcard/Android/media/com.whatsapp.w4b/WhatsApp Business/Media';
+  const D = '/sdcard/Android/data/' + P + '/files/wa-test/Media';   // en test : dossier de l'app (en vrai : dossier choisi par l'utilisateur)
   sh(`adb shell "mkdir -p '${D}/WhatsApp Business Images' '${D}/WhatsApp Business Documents'"`);
   log('dossier créé:', sh(`adb shell "ls '${D}'"`));
   st = JSON.parse(await js('SonicodNative.botStatus()'));

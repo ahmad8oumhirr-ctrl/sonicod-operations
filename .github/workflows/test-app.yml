@@ -28,7 +28,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug 2>&1 | tail -20 | tee ../results/build.txt
+          ./gradlew --no-daemon assembleStaffDebug assembleBotDebug 2>&1 | tail -20 | tee ../results/build.txt
 
       - name: Activer KVM
         run: |

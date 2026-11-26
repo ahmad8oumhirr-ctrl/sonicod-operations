@@ -85,6 +85,7 @@ object WaBot {
     fun isEnabled(ctx: Context) = synchronized(lock) { load(ctx).optBoolean("enabled", false) }
 
     fun setEnabled(ctx: Context, on: Boolean) {
+        if (!BuildConfig.BOT) return
         edit(ctx) { it.put("enabled", on) }
         if (on) { BotWorker.schedulePeriodic(ctx); BotWorker.kick(ctx) } else { WorkManager.getInstance(ctx).cancelUniqueWork("wabot-periodic") }
     }
@@ -102,10 +103,16 @@ object WaBot {
         return s.contains(ctx.packageName + "/")
     }
 
-    fun hasFilesAccess(ctx: Context): Boolean = when {
-        Build.VERSION.SDK_INT >= 30 -> Environment.isExternalStorageManager()
-        else -> ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    /* Dossier WhatsApp choisi UNE fois par l'utilisateur (Android le partage avec l'app) : pas d'« accès à tous les fichiers ». */
+    fun treeUri(ctx: Context): android.net.Uri? = synchronized(lock) { load(ctx).optString("tree").takeIf { it.isNotEmpty() }?.let { android.net.Uri.parse(it) } }
+    fun setTree(ctx: Context, uri: android.net.Uri) { edit(ctx) { it.put("tree", uri.toString()).remove("dirs") } }
+
+    fun hasFilesAccess(ctx: Context): Boolean {
+        if (testMode(ctx) && testRoot(ctx).isDirectory) return true
+        val t = treeUri(ctx) ?: return false
+        return ctx.contentResolver.persistedUriPermissions.any { it.uri == t && it.isReadPermission }
     }
+    private fun testRoot(ctx: Context) = File(ctx.getExternalFilesDir(null), "wa-test/Media")
 
     fun status(ctx: Context): JSONObject = synchronized(lock) {
         val o = load(ctx)
@@ -116,7 +123,7 @@ object WaBot {
             s.keys().asSequence().map { it to s.optLong(it) }.sortedByDescending { it.second }.take(25)
                 .forEach { (g, t) -> if (!groups.has(g)) seen.put(JSONObject().put("name", g).put("t", t)) }
         }
-        val roots = mediaRoots().map { it.path }
+        val roots = try { mediaDirs(ctx, "img") + mediaDirs(ctx, "doc") } catch (e: Exception) { emptyList() }
         JSONObject()
             .put("enabled", o.optBoolean("enabled", false))
             .put("notif", hasNotifAccess(ctx))
@@ -197,31 +204,67 @@ object WaBot {
 
     /* ---------------- dossier WhatsApp ---------------- */
 
-    fun mediaRoots(): List<File> {
-        val ext = Environment.getExternalStorageDirectory()
-        return listOf(
-            File(ext, "Android/media/com.whatsapp.w4b/WhatsApp Business/Media"),
-            File(ext, "WhatsApp Business/Media"),
-            File(ext, "Android/media/com.whatsapp/WhatsApp/Media"),
-            File(ext, "WhatsApp/Media")
-        ).filter { it.isDirectory }
+    /** Un fichier du dossier WhatsApp (uri content:// ou file://). */
+    data class MFile(val uri: String, val name: String, val mtime: Long, val size: Long)
+
+    private data class Child(val id: String, val name: String, val dir: Boolean, val mtime: Long, val size: Long)
+
+    private fun children(ctx: Context, tree: android.net.Uri, docId: String): List<Child> {
+        val out = ArrayList<Child>()
+        val u = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
+        val proj = arrayOf(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID, android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE, android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED, android.provider.DocumentsContract.Document.COLUMN_SIZE)
+        ctx.contentResolver.query(u, proj, null, null, null)?.use { c ->
+            while (c.moveToNext()) out.add(Child(c.getString(0), c.getString(1) ?: "", c.getString(2) == android.provider.DocumentsContract.Document.MIME_TYPE_DIR, c.getLong(3), c.getLong(4)))
+        }
+        return out
+    }
+
+    /** Dossiers « … Images » / « … Documents » de WhatsApp (cherchés une fois sous le dossier choisi). */
+    private fun mediaDirs(ctx: Context, kind: String): List<String> {
+        val suffix = if (kind == "img") " Images" else " Documents"
+        if (testMode(ctx) && testRoot(ctx).isDirectory) return testRoot(ctx).listFiles { f -> f.isDirectory && f.name.endsWith(suffix) }?.map { "file:" + it.path } ?: emptyList()
+        val tree = treeUri(ctx) ?: return emptyList()
+        val cached = synchronized(lock) { load(ctx).optJSONObject("dirs")?.optJSONArray(kind) }
+        if (cached != null && cached.length() > 0) return (0 until cached.length()).map { cached.getString(it) }
+        val found = ArrayList<String>()
+        var level = listOf(android.provider.DocumentsContract.getTreeDocumentId(tree))
+        for (depth in 0..4) {
+            val next = ArrayList<String>()
+            for (id in level) for (ch in children(ctx, tree, id)) if (ch.dir) {
+                if (ch.name.endsWith(suffix)) found.add(ch.id) else if (ch.name != "Sent" && ch.name != "Private" && !ch.name.startsWith(".")) next.add(ch.id)
+            }
+            if (found.isNotEmpty() || next.isEmpty()) break
+            level = next.take(40)
+        }
+        if (found.isNotEmpty()) edit(ctx) { o -> o.obj("dirs").put(kind, JSONArray(found)) }
+        return found
     }
 
     /** Fichiers reçus (pas le dossier « Sent ») des 4 derniers jours. */
-    private fun mediaFiles(kind: String): List<File> {
+    private fun mediaFiles(ctx: Context, kind: String): List<MFile> {
         val limit = System.currentTimeMillis() - 4 * DAY
-        val out = ArrayList<File>()
-        for (root in mediaRoots()) {
-            val dirs = root.listFiles { f -> f.isDirectory && (if (kind == "img") f.name.endsWith(" Images") else f.name.endsWith(" Documents")) } ?: continue
-            for (d in dirs) d.listFiles()?.forEach { f ->
-                if (f.isFile && !f.name.startsWith(".") && f.lastModified() > limit && f.length() > 0) {
-                    val ok = if (kind == "img") f.name.matches(Regex("(?i).+\\.(jpe?g|png|webp)$")) else true
-                    if (ok) out.add(f)
+        val imgRe = Regex("(?i).+\\.(jpe?g|png|webp)$")
+        val out = ArrayList<MFile>()
+        val tree = treeUri(ctx)
+        for (d in mediaDirs(ctx, kind)) {
+            if (d.startsWith("file:")) {
+                File(d.removePrefix("file:")).listFiles()?.forEach { f ->
+                    if (f.isFile && !f.name.startsWith(".") && f.lastModified() > limit && f.length() > 0 && (kind != "img" || imgRe.matches(f.name)))
+                        out.add(MFile(android.net.Uri.fromFile(f).toString(), f.name, f.lastModified(), f.length()))
+                }
+            } else if (tree != null) {
+                for (ch in children(ctx, tree, d)) {
+                    if (ch.dir || ch.name.startsWith(".") || ch.mtime <= limit || ch.size <= 0) continue
+                    if (kind == "img" && !imgRe.matches(ch.name)) continue
+                    out.add(MFile(android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, ch.id).toString(), ch.name, ch.mtime, ch.size))
                 }
             }
         }
-        return out.sortedBy { it.lastModified() }
+        return out.sortedBy { it.mtime }
     }
+
+    private fun open(ctx: Context, uri: String) = ctx.contentResolver.openInputStream(android.net.Uri.parse(uri))
 
     private fun baseName(n: String) = n.substringBeforeLast('.').replace(Regex("""\s*\(\d+\)$"""), "").trim().lowercase(Locale.ROOT)
 
@@ -256,13 +299,15 @@ object WaBot {
     }
 
     /** Lit le texte d'une photo sur le téléphone (ML Kit), sinon via le serveur Google. */
-    fun readLabel(ctx: Context, f: File): Label? {
+    fun readLabel(ctx: Context, f: File): Label? = readLabelFrom(ctx) { if (f.exists()) f.inputStream() else null }
+
+    fun readLabelFrom(ctx: Context, opener: () -> java.io.InputStream?): Label? {
         try {
             val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(f.path, b)
+            opener()?.use { BitmapFactory.decodeStream(it, null, b) }
             var s = 1
             while (b.outWidth / (s * 2) >= 1600 && b.outHeight / (s * 2) >= 1600) s *= 2
-            val bmp = BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = s }) ?: return null
+            val bmp = opener()?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = s }) } ?: return null
             val rec = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             try {
                 val text = Tasks.await(rec.process(InputImage.fromBitmap(bmp, 0)), 40, TimeUnit.SECONDS).text
@@ -274,7 +319,7 @@ object WaBot {
             // module de lecture pas encore téléchargé, etc. → lecture par le serveur
         }
         return try {
-            val id = PhotoStore.importFile(ctx, f) ?: return null
+            val id = PhotoStore.importImage(ctx, opener) ?: return null
             val b64 = PhotoStore.base64(ctx, id)
             PhotoStore.delete(ctx, id)
             val r = Api.post(Session.serverUrl(ctx), JSONObject().put("action", "ocrLabel").put("key", APP_KEY).put("b64", b64).toString())
@@ -319,12 +364,12 @@ object WaBot {
     /** Relie notifications et fichiers, lit les étiquettes et envoie au Sheet. Renvoie un résumé. */
     fun run(ctx: Context): JSONObject {
         val res = JSONObject()
-        if (!hasFilesAccess(ctx)) { log(ctx, "⚠ Accès aux fichiers WhatsApp refusé"); return res.put("ok", false).put("error", "Autorisez l'accès aux fichiers.") }
-        if (mediaRoots().isEmpty()) { log(ctx, "⚠ Dossier WhatsApp introuvable"); return res.put("ok", false).put("error", "Dossier WhatsApp introuvable sur ce téléphone.") }
+        if (!hasFilesAccess(ctx)) { log(ctx, "⚠ Choisissez le dossier WhatsApp Business"); return res.put("ok", false).put("error", "Choisissez d'abord le dossier WhatsApp Business.") }
+        if (mediaDirs(ctx, "img").isEmpty()) { log(ctx, "⚠ Dossier « WhatsApp Business Images » introuvable dans le dossier choisi"); return res.put("ok", false).put("error", "Dossier WhatsApp introuvable : choisissez « com.whatsapp.w4b ».") }
 
         val now = System.currentTimeMillis()
-        val imgs = mediaFiles("img")
-        val docs = mediaFiles("doc")
+        val imgs = mediaFiles(ctx, "img")
+        val docs = mediaFiles(ctx, "doc")
 
         // 1) relier chaque notification à son fichier
         val (groups, records) = synchronized(lock) {
@@ -337,14 +382,14 @@ object WaBot {
             for (e in list) {
                 if (e.has("f") || e.optBoolean("x")) continue
                 val t = e.optLong("t")
-                val f: File? = if (e.optString("k") == "doc") {
+                val f: MFile? = if (e.optString("k") == "doc") {
                     val want = baseName(e.optString("n"))
-                    docs.firstOrNull { it.path !in claimed && want.isNotEmpty() && want != "document" && baseName(it.name) == want && it.lastModified() >= t - 120_000 }
-                        ?: docs.firstOrNull { it.path !in claimed && it.lastModified() in (t - 120_000)..(t + 6 * 3600_000) && (want.isEmpty() || want == "document") }
+                    docs.firstOrNull { it.uri !in claimed && want.isNotEmpty() && want != "document" && baseName(it.name) == want && it.mtime >= t - 120_000 }
+                        ?: docs.firstOrNull { it.uri !in claimed && it.mtime in (t - 120_000)..(t + 6 * 3600_000) && (want.isEmpty() || want == "document") }
                 } else {
-                    imgs.firstOrNull { it.path !in claimed && it.lastModified() in (t - 120_000)..(t + 6 * 3600_000) && now - it.lastModified() > 10_000 }
+                    imgs.firstOrNull { it.uri !in claimed && it.mtime in (t - 120_000)..(t + 6 * 3600_000) && now - it.mtime > 10_000 }
                 }
-                if (f != null) { e.put("f", f.path); claimed.add(f.path) }
+                if (f != null) { e.put("f", f.uri).put("fn", f.name); claimed.add(f.uri) }
                 else if (now - t > 6 * 3600_000) e.put("x", true)   // jamais téléchargé (téléchargement auto désactivé ?)
             }
             o.put("events", JSONArray(list))
@@ -360,6 +405,7 @@ object WaBot {
                 val key = "$g|$day"
                 val r = recs.getOrPut(key) { JSONObject().put("key", key).put("g", g).put("day", day).put("ville", ville).put("img", JSONArray()).put("doc", JSONArray()) }
                 r.getJSONArray(if (e.optString("k") == "doc") "doc" else "img").put(path)
+                r.obj("names").put(path, e.optString("fn").ifEmpty { android.net.Uri.decode(path).substringAfterLast('/') })
             }
             groups to recs.values.toList()
         }
@@ -402,7 +448,7 @@ object WaBot {
             val cached = ocr.optJSONObject(path)
             val lab = if (cached != null) Label(cached.optInt("c", 0).takeIf { it > 0 }, cached.optString("b"), "", cached.optBoolean("l"),
                 cached.optJSONArray("t")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList())
-            else (readLabel(ctx, File(path)) ?: Label(null, "", "")).also {
+            else (readLabelFrom(ctx) { open(ctx, path) } ?: Label(null, "", "")).also {
                 newOcr.put(path, JSONObject().put("c", it.colis ?: 0).put("b", it.brv).put("l", it.label).put("t", JSONArray(it.tracks)))
             }
             reads.add(lab)
@@ -413,9 +459,11 @@ object WaBot {
         val source = cnt.source
         val brvs = cnt.brvs
 
-        val newImgs = (0 until imgs.length()).map { imgs.getString(it) }.filter { it !in doneSet && File(it).exists() }
+        val names = r.optJSONObject("names") ?: JSONObject()
+        val nameOf = { u: String -> names.optString(u).ifEmpty { android.net.Uri.decode(u).substringAfterLast('/') } }
+        val newImgs = (0 until imgs.length()).map { imgs.getString(it) }.filter { it !in doneSet }
         val dl = r.getJSONArray("doc")
-        val newDocs = (0 until dl.length()).map { dl.getString(it) }.filter { it !in doneSet && File(it).exists() }
+        val newDocs = (0 until dl.length()).map { dl.getString(it) }.filter { it !in doneSet }
         val sameColis = (done.opt("c") as? Int ?: 0) == (colis ?: 0) && done.has("c")
         if (newImgs.isEmpty() && newDocs.isEmpty() && sameColis && done.optString("l") == ville) return false
 
@@ -430,13 +478,15 @@ object WaBot {
             val tmp = ArrayList<String>()
             for (path in chunk) {
                 // identifiant = nom du fichier WhatsApp : le Sheet ignore une photo déjà enregistrée
-                PhotoStore.importFile(ctx, File(path))?.let { id -> tmp.add(id); PhotoStore.base64(ctx, id)?.let { photos.put(JSONObject().put("b64", it).put("id", "f:" + File(path).name)) } }
+                try { PhotoStore.importImage(ctx) { open(ctx, path) } } catch (e: Exception) { null }
+                    ?.let { id -> tmp.add(id); PhotoStore.base64(ctx, id)?.let { photos.put(JSONObject().put("b64", it).put("id", "f:" + nameOf(path))) } }
             }
             val files = JSONArray()
             if (idx == 0) for (path in newDocs) {
-                val f = File(path)
-                if (f.length() in 1..15L * 1024 * 1024) files.put(JSONObject().put("b64", Base64.encodeToString(f.readBytes(), Base64.NO_WRAP)).put("name", f.name)
-                    .put("mime", if (f.name.endsWith(".pdf", true)) "application/pdf" else "application/octet-stream"))
+                val nm = nameOf(path)
+                val bytes = try { open(ctx, path)?.use { it.readBytes() } } catch (e: Exception) { null }
+                if (bytes != null && bytes.size in 1..15 * 1024 * 1024) files.put(JSONObject().put("b64", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("name", nm)
+                    .put("mime", if (nm.endsWith(".pdf", true)) "application/pdf" else "application/octet-stream"))
             }
             val req = JSONObject().put("action", "addPending").put("key", APP_KEY).put("pid", pid).put("livreur", ville)
                 .put("colis", colis ?: "").put("date", day).put("who", "Bot téléphone").put("note", note)
@@ -456,6 +506,18 @@ object WaBot {
         }
         log(ctx, "✓ $group → $ville " + (colis?.let { "$it colis" } ?: "colis ?") + " · +" + newImgs.size + " photo(s) · +" + newDocs.size + " PDF (ligne $lastRow)")
         return true
+    }
+}
+
+/** Reçoit les notifications de WhatsApp (seulement le groupe, l'heure et le type : 📷 / 📄). Déclaré seulement dans l'app « SONICOD Bot ». */
+class WaListener : android.service.notification.NotificationListenerService() {
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (sbn == null) return
+        try { WaBot.onNotification(applicationContext, sbn) } catch (e: Exception) {}
+    }
+
+    override fun onListenerConnected() {
+        try { activeNotifications?.forEach { WaBot.onNotification(applicationContext, it) } } catch (e: Exception) {}
     }
 }
 
