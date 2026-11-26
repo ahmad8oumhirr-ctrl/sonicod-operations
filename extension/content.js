@@ -39,7 +39,8 @@
     if (s.indexOf(',') < 0) return false;
     return /(^|,\s*)(You|Vous|Toi|أنت)\s*$/i.test(s) || s.split(',').length >= 4;
   }
-  const normName = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  // nom de groupe comparé sans emoji / ponctuation / majuscules (« 🟢 Ramassage Sonicod » = « ramassage sonicod »)
+  const normName = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   function chatName() {
     // 1) le groupe sélectionné dans la liste de gauche (le plus fiable)
     const sel = $('#pane-side [aria-selected="true"] span[title]');
@@ -282,8 +283,8 @@
   }
 
   /** Étape 1 (rapide, chat ouvert) : photos du jour + bon PDF. La lecture des étiquettes se fait après. */
-  async function collectOpenChat(dayIso) {
-    const group = chatName();
+  async function collectOpenChat(dayIso, configured) {
+    const group = configured || chatName();
     if (!group) { log('Ouvrez d\'abord un groupe dans WhatsApp.'); return null; }
     const groups = (await store.get('groups')) || {};
     if (dayIso < isoOf(new Date())) await loadDay(dayIso);
@@ -381,35 +382,78 @@
   function fireClick(el) {
     ['mousedown', 'mouseup', 'click'].forEach(t => el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })));
   }
+  /** Noms des discussions visibles à gauche (pour choisir le groupe sans faute de frappe). */
+  function chatNames() {
+    const out = [];
+    $$('#pane-side span[title], #side span[title]').forEach(sp => { const t = (sp.getAttribute('title') || '').trim(); if (t && !looksLikeMembers(t) && out.indexOf(t) < 0 && t.length < 80) out.push(t); });
+    return out.slice(0, 60);
+  }
+  /** Barre de recherche des discussions (WhatsApp Web change souvent : plusieurs essais). */
+  function searchBox() {
+    const sels = ['#side div[contenteditable="true"]', '#side input[type="text"]', '[aria-label*="Search" i][contenteditable="true"]', '[aria-label*="Rechercher" i][contenteditable="true"]',
+      'input[aria-label*="Search" i]', 'input[aria-label*="Rechercher" i]', 'div[contenteditable="true"][data-tab="3"]', '[role="textbox"][contenteditable="true"]'];
+    for (const q of sels) {
+      const el = $$(q).find(e => !e.closest('#main, footer, #snc-panel') && e.offsetParent !== null);
+      if (el) return el;
+    }
+    return null;
+  }
+  function typeSearch(box, text) {
+    box.focus();
+    if (box.tagName === 'INPUT') {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      set.call(box, text);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      document.execCommand('selectAll', false, null);
+      if (text) document.execCommand('insertText', false, text); else document.execCommand('delete', false, null);
+    }
+  }
+  /** Chat de la liste de gauche (ou des résultats de recherche) dont le nom correspond. */
   function findChatInList(name) {
-    const span = $$('#pane-side span[title]').find(s => normName(s.getAttribute('title')) === normName(name));
-    return span ? (span.closest('[role="listitem"]') || span.closest('[role="row"]') || span.closest('div[tabindex]') || span) : null;
+    const want = normName(name);
+    const spans = $$('#pane-side span[title], #side span[title], [aria-label*="hat list" i] span[title], [aria-label*="iscussions" i] span[title], [role="grid"] span[title], [role="list"] span[title]')
+      .filter(sp => !sp.closest('#main, #snc-panel, header'));
+    let hit = spans.find(sp => normName(sp.getAttribute('title')) === want);
+    if (!hit) { const c = spans.filter(sp => { const n = normName(sp.getAttribute('title')); return n && (n.indexOf(want) >= 0 || want.indexOf(n) >= 0) && n.length > 3; }); if (c.length === 1) hit = c[0]; }
+    return hit || null;
   }
   async function openChat(name) {
-    let el = findChatInList(name);
-    if (!el) {
-      const box = $('#side div[contenteditable="true"]');
+    const want = normName(name);
+    if (normName(chatName()) === want) return true;                      // déjà ouvert
+    let span = findChatInList(name);
+    let box = null;
+    if (!span) {
+      box = searchBox();
       if (box) {
-        box.focus();
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, name);
-        await wait(1800);
-        el = findChatInList(name);
+        typeSearch(box, name);
+        for (let i = 0; i < 12 && !span; i++) { await wait(300); span = findChatInList(name); }
       }
     }
-    if (!el) return false;
-    fireClick(el);
-    for (let i = 0; i < 25; i++) { await wait(200); if (normName(chatName()) === normName(name)) break; }
-    // attendre que les messages et les photos du chat soient affichés (stable 2 fois de suite)
-    let last = -1, stable = 0;
-    for (let i = 0; i < 16 && stable < 2; i++) {
-      await wait(250);
-      const n = $$('#main [role="row"]').length * 100 + $$('#main img[src^="blob:"]').length;
-      stable = (n === last && n > 0) ? stable + 1 : 0; last = n;
+    let ok = false;
+    if (span) {
+      const targets = [span.closest('[role="listitem"]'), span.closest('[role="row"]'), span.closest('[role="gridcell"]'), span.closest('[role="button"]'), span.closest('div[tabindex]'), span]
+        .filter((x, i, a) => x && a.indexOf(x) === i);
+      for (const t of targets) {
+        fireClick(t);
+        for (let i = 0; i < 10; i++) { await wait(200); if (normName(chatName()) === want) { ok = true; break; } }
+        if (ok) break;
+      }
     }
-    const box = $('#side div[contenteditable="true"]');
-    if (box && box.textContent) { box.focus(); document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); }
-    return normName(chatName()) === normName(name);
+    if (ok) {
+      // attendre que les messages et les photos du chat soient affichés (stable 2 fois de suite)
+      let last = -1, stable = 0;
+      for (let i = 0; i < 16 && stable < 2; i++) {
+        await wait(250);
+        const n = $$('#main [data-id]').length * 100 + $$('#main img[src^="blob:"]').length;
+        stable = (n === last && n > 0) ? stable + 1 : 0; last = n;
+      }
+    } else {
+      log('Groupe introuvable : ' + name + (box || searchBox() ? (span ? ' (trouvé mais ne s\'ouvre pas)' : ' (pas dans les résultats de recherche)') : ' (barre de recherche introuvable)'));
+    }
+    const b2 = box || searchBox();
+    if (b2 && ((b2.value || b2.textContent || '').trim())) typeSearch(b2, '');
+    return ok;
   }
 
   /* ---------------- panneau ---------------- */
@@ -440,10 +484,9 @@
     panel.innerHTML =
       '<div class="h"><b>⚡ SONICOD · Retours du jour</b><button id="snc-x">✕</button></div><div class="b">' +
       '<label>Dates à lire</label><div class="row" style="align-items:center"><span style="font-size:13px">Du</span><input type="date" id="snc-day" value="' + (selDay || today) + '"><span style="font-size:13px">au</span><input type="date" id="snc-day2" value="' + (selDay2 || selDay || today) + '"></div>' +
-      '<label>Groupe ouvert</label><div class="grp">' + (group ? esc(group) : 'Aucun – ouvrez un groupe retour') + '</div>' +
-      (group ? '<label>Ce groupe correspond à</label><select id="snc-city">' + cityOpts(groups[group] || '') + '</select>' : '') +
-      '<div class="row"><button class="btn" id="snc-one"' + (group ? '' : ' disabled') + '>Lire ce groupe</button>' +
-      '<button class="btn o" id="snc-all"' + (Object.keys(groups).length ? '' : ' disabled') + '>Lire tous mes groupes (' + Object.keys(groups).length + ')</button></div>' +
+      '<div class="row">' +
+      '<button class="btn" id="snc-all"' + (Object.keys(groups).length ? '' : ' disabled') + '>Lire mes groupes (' + Object.keys(groups).length + ') maintenant</button></div>' +
+      '<div class="s" style="font-size:12px;color:#6F6680;margin-top:4px">Le bot lit SEULEMENT les groupes de « Mes groupes retour », même si un autre chat est ouvert.</div>' +
       '<div class="autobox" style="border:2px solid #CF118B"><b>🤖 Lecture automatique de tous mes groupes</b>' +
       '<select id="snc-every" style="margin-top:6px">' + [[0, 'Désactivée'], [30, 'Toutes les 30 minutes'], [60, 'Toutes les heures'], [120, 'Toutes les 2 heures'], [240, 'Toutes les 4 heures']].map(x =>
         '<option value="' + x[0] + '"' + ((auto.on ? auto.every : 0) === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select>' +
@@ -460,7 +503,7 @@
       '<button class="btn g" id="snc-save" style="display:none">Renvoyer au Sheet</button>' +
       '<div class="log" id="snc-log">' + esc(logLines.slice(-12).join('\n')) + '</div>' +
       '<div class="autobox"><b>Ajouter un groupe retour</b>' +
-      '<label>Nom du groupe (exactement comme dans WhatsApp)</label><input id="snc-gname" placeholder="Ex : Roteur Rushliv Casa">' +
+      '<label>Nom du groupe (exactement comme dans WhatsApp)</label><input id="snc-gname" list="snc-chats" placeholder="Ex : Roteur Rushliv Casa"><datalist id="snc-chats">' + chatNames().map(n => '<option value="' + esc(n) + '">').join('') + '</datalist>' +
       '<label>Ville / Livreur</label><select id="snc-gcity">' + cityOpts('') + '</select>' +
       '<button class="btn" id="snc-gadd" style="margin-top:8px">＋ Ajouter</button></div>' +
       '<details open><summary>Mes groupes retour (' + Object.keys(groups).length + ')</summary>' +
@@ -470,13 +513,6 @@
     $('#snc-x').onclick = () => { panel.style.display = 'none'; };
     $('#snc-day').onchange = () => { selDay = $('#snc-day').value || ''; if (!selDay2 || selDay2 < selDay) { selDay2 = selDay; $('#snc-day2').value = selDay; } };
     $('#snc-day2').onchange = () => { selDay2 = $('#snc-day2').value || ''; };
-    const citySel = $('#snc-city');
-    if (citySel) citySel.onchange = async () => {
-      const g = (await store.get('groups')) || {};
-      if (citySel.value) g[group] = citySel.value; else delete g[group];
-      await store.set('groups', g);
-      renderPanel();
-    };
     $$('[data-del]').forEach(a => a.onclick = async e => { e.preventDefault(); const g = (await store.get('groups')) || {}; delete g[a.getAttribute('data-del')]; await store.set('groups', g); renderPanel(); });
     $('#snc-gadd').onclick = async () => {
       const n = $('#snc-gname').value.trim(), c = $('#snc-gcity').value;
@@ -486,15 +522,11 @@
       log('Groupe ajouté : ' + n + ' → ' + c); renderPanel();
     };
     $('#snc-url').onchange = async () => { await store.set('serverUrl', $('#snc-url').value.trim()); log('Adresse enregistrée.'); };
-    $('#snc-one').onclick = async () => {
-      const range = daysRange($('#snc-day').value || today, $('#snc-day2').value || $('#snc-day').value || today);
-      const day = range[0];
-      if (citySel && citySel.value) { const g = (await store.get('groups')) || {}; g[group] = citySel.value; await store.set('groups', g); }
-      if (citySel && !citySel.value && !guessCity(group, '', groups)) { log('⚠ Choisissez d\'abord la ville dans « Ce groupe correspond à ».'); citySel.focus(); return; }
-      busy(true); results = []; for (const d of range) await analyseOpenChat(d); busy(false);
-    };
     $('#snc-all').onclick = async () => {
-      busy(true); results = []; await runAll(daysRange($('#snc-day').value || today, $('#snc-day2').value || $('#snc-day').value || today)); busy(false); renderPanel();
+      const before = chatName();
+      busy(true); results = [];
+      try { await runAll(daysRange($('#snc-day').value || today, $('#snc-day2').value || $('#snc-day').value || today)); }
+      finally { if (before && normName(chatName()) !== normName(before)) { try { await openChat(before); } catch (e) {} } busy(false); renderPanel(); }
     };
     const saveSched = async (sc) => { await store.set('sched', sc); chrome.runtime.sendMessage({ type: 'schedule', sched: sc }); };
     $('#snc-auto').onchange = async () => { sched.on = $('#snc-auto').checked; await store.set('lastSlot', Date.now()); await saveSched(sched); log(sched.on ? 'Programmation activée : ' + sched.times.join(', ') : 'Programmation arrêtée.'); };
@@ -517,7 +549,7 @@
     renderResults();
   }
 
-  function busy(on) { ['#snc-one', '#snc-all', '#snc-save'].forEach(s => { const b = $(s); if (b) b.disabled = on; }); }
+  function busy(on) { ['#snc-all', '#snc-save'].forEach(s => { const b = $(s); if (b) b.disabled = on; }); }
 
   function renderResults() {
     const box = $('#snc-res');
@@ -610,7 +642,7 @@
       log('(' + (i + 1) + '/' + names.length + ') ' + g);
       if (await openChat(g)) {
         for (const d of days) {
-          const rec = await collectOpenChat(d);
+          const rec = await collectOpenChat(d, g);
           if (!rec) continue;
           found++;
           // lecture des étiquettes + envoi en arrière-plan pendant qu'on ouvre le groupe suivant
