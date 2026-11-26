@@ -705,7 +705,7 @@
     var bs = botStatus();
     var botOn = bs && bs.enabled && bs.notif && bs.files;
     view(
-      (NATIVE && NATIVE.botStatus ? '<button class="botbar ' + (botOn ? 'on' : 'off') + '" id="goBot"><span class="dot"></span><span class="bt"><b>Bot WhatsApp du téléphone</b><br><small>' +
+      (bs ? '<button class="botbar ' + (botOn ? 'on' : 'off') + '" id="goBot"><span class="dot"></span><span class="bt"><b>Bot WhatsApp du téléphone</b><br><small>' +
         (botOn ? 'Actif · ' + Object.keys(bs.groups || {}).length + ' groupe(s) suivis' : 'Inactif – appuyez pour l\'activer') + '</small></span>' + ic('gear') + '</button>' : '') +
       '<div class="sec" style="margin:0 2px 10px"><b>Par groupe et par jour</b><small><button class="btn btn-ghost btn-sm" id="pReload">' + ic('sync') + 'Actualiser</button></small></div>' +
       '<div id="pList">' + pendListHtml() + '</div>'
@@ -925,8 +925,8 @@
       '<div class="card"><div class="sec"><b>1 · Autorisations</b></div>' +
       step(st.notif, 1, 'Lire les notifications WhatsApp', 'Pour savoir quel groupe envoie une photo ou un PDF.', 'Activer', 'bNotif') +
       (!st.notif && st.sdk >= 33 ? '<div class="note info small">Si Android dit « Paramètre restreint » : <a href="#" id="bInfo">Infos de l\'appli</a> → ⋮ en haut → <b>Autoriser les paramètres restreints</b>, puis réessayez.</div>' : '') +
-      step(st.files, 2, 'Lire le dossier WhatsApp', 'Pour récupérer les photos et le bon PDF reçus.', 'Autoriser', 'bFiles') +
-      (st.files && !st.whatsappFolder ? '<div class="note err small">Dossier WhatsApp Business introuvable sur ce téléphone.</div>' : '') +
+      step(st.files, 2, 'Choisir le dossier WhatsApp Business', 'Une seule fois. Android ouvre « com.whatsapp.w4b » : appuyez sur « Utiliser ce dossier » puis « Autoriser ».', 'Choisir', 'bFiles') +
+      (st.files && !st.whatsappFolder ? '<div class="note err small">Dans ce dossier, « WhatsApp Business Images » est introuvable : appuyez à nouveau sur Choisir et prenez <b>Android › media › com.whatsapp.w4b</b>.</div><button class="btn btn-ghost btn-sm" id="bFiles2">Choisir à nouveau</button>' : '') +
       '<div class="note info small">Dans WhatsApp Business : <b>Paramètres → Stockage et données → Téléchargement auto</b> : cochez <b>Photos</b> et <b>Documents</b>. Ne mettez pas les groupes retour en silencieux.</div>' +
       '</div>' +
       '<div class="card"><label class="kv"><span><b>2 · Bot activé</b><br><span class="small muted">Envoi automatique quelques minutes après chaque photo</span></span>' +
@@ -953,6 +953,7 @@
     };
     var n1 = $('#bNotif'); if (n1) n1.onclick = function () { NATIVE.botOpenNotif(); };
     var n2 = $('#bFiles'); if (n2) n2.onclick = function () { NATIVE.botOpenFiles(); };
+    var n2b = $('#bFiles2'); if (n2b) n2b.onclick = function () { NATIVE.botOpenFiles(); };
     var n3 = $('#bInfo'); if (n3) n3.onclick = function (e) { e.preventDefault(); NATIVE.botOpenAppInfo(); };
     $('#bOn').onchange = function () {
       if (this.checked && !names.length) { this.checked = false; toast('Ajoutez d\'abord un groupe retour', 'err'); return; }
@@ -965,7 +966,7 @@
     $$('[data-gs]').forEach(function (b) { b.onclick = function () { addGroup(st.seen[+b.getAttribute('data-gs')].name); }; });
     $('#bAdd').onclick = function () { promptBox('Nom exact du groupe WhatsApp', 'Ex : Retour CASA Sonicod').then(addGroup); };
     $('#bRun').onclick = function () {
-      if (!st.files) { toast('Autorisez d\'abord le dossier WhatsApp', 'err'); return; }
+      if (!st.files) { toast('Choisissez d\'abord le dossier WhatsApp Business', 'err'); return; }
       var b = this; b.disabled = true; b.innerHTML = '<i class="spin"></i> Lecture des groupes…';
       nat('botRun').then(function (r) {
         toast(r.ok ? (r.sent ? '✓ ' + r.sent + ' groupe(s) envoyé(s) au Sheet' : 'Rien de nouveau ✓') : (r.error || 'Erreur – voir le journal'), r.ok ? 'ok' : 'err');
@@ -1043,7 +1044,7 @@
     view(
       '<div class="card"><label class="kv"><span><b>Scan en continu</b><br><span class="small muted">Le scanner se rouvre après chaque colis</span></span>' +
       '<span class="switch"><input type="checkbox" id="rafale"' + (state.rafale ? ' checked' : '') + '><span></span></span></label></div>' +
-      (NATIVE && NATIVE.botStatus ? '<button class="btn btn-outline" id="sBot">' + ic('wa') + 'Bot WhatsApp du téléphone</button>' : '') +
+      (info().bot ? '<button class="btn btn-outline" id="sBot">' + ic('wa') + 'Bot WhatsApp du téléphone</button>' : '') +
       '<div class="card"><div class="sec"><b>Couleurs</b></div><div class="pal-row" id="pals">' +
       [['sonicod', 'Sonicod', 'linear-gradient(135deg,#E0168F,#8E2BC0)'], ['jaune', 'Noir & Jaune', 'linear-gradient(135deg,#111 50%,#FFD60A 50%)'], ['violet', 'Violet', '#6E2B92']].map(function (x) {
         return '<button class="pal' + ((store('pal') || 'sonicod') === x[0] ? ' on' : '') + '" data-pal="' + x[0] + '"><i style="background:' + x[2] + '"></i>' + x[1] + '</button>';
@@ -1105,7 +1106,7 @@
   $('#sheetBg').onclick = closeSheet;
   $$('#nav button').forEach(function (b) { b.onclick = function () { go(b.getAttribute('data-go')); }; });
   $('#syncPill').onclick = function () { go('settings'); };
-  go('op', {}, { replace: true });
+  go(info().bot ? 'bot' : 'op', {}, { replace: true });
   setTimeout(function () { window.sonicodOrphans(); window.sonicodShareReady(); }, 800);
   if (info().serverUrl) { loadConfig(); retryScans(); }
 })();
