@@ -2,6 +2,7 @@
 const WebSocket = require('ws'); const http = require('http'); const fs = require('fs'); const cp = require('child_process');
 const OUT = process.env.OUT || 'results';
 const log = (...a) => { const l = a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' '); console.log(l); fs.appendFileSync(OUT + '/bot_test.txt', l + '\n'); };
+const G = 'Retour TEST Claude ' + (Date.now() % 100000);   // nom unique : le test ne touche jamais une vraie ligne
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const getJson = url => new Promise((res, rej) => http.get(url, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { res(JSON.parse(d)); } catch (e) { rej(e); } }); }).on('error', rej));
 const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } catch (e) { return 'ERR ' + (e.stderr || e.message); } };
@@ -20,7 +21,7 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   const P = 'ma.sonicod.operations.bot';
   log('autorisation notifications:', sh(`adb shell cmd notification allow_listener ${P}/ma.sonicod.operations.WaListener`) || 'ok');
   await js(`SonicodNative.botTestMode(true)`);
-  await js(`SonicodNative.botSetGroups(JSON.stringify({'Retour CASA Sonicod':'CASA'}))`);
+  await js(`SonicodNative.botSetGroups(JSON.stringify({[G]:'CASA'}))`);
   await js(`SonicodNative.botSetBlocked(JSON.stringify(['Karim']))`);
   await js(`SonicodNative.botSetEnabled(true)`);   // les photos de Karim ne doivent pas être prises
   await wait(3000);
@@ -34,9 +35,9 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   log('dossier WhatsApp trouvé:', st.whatsappFolder);
 
   // notification de groupe : une photo + un bon PDF ; et une autre d'un groupe non suivi
-  log('notif 1:', sh(`adb shell "cmd notification post -S messaging --conversation 'Retour CASA Sonicod' --message 'Ahmed:📷 2 colis retour' --message 'Ahmed:📄 BRV-2026112500123.pdf' casa1 'x'"`));
+  log('notif 1:', sh(`adb shell "cmd notification post -S messaging --conversation '${G}' --message 'Ahmed:📷 2 colis retour' --message 'Ahmed:📄 BRV-2026112500123.pdf' casa1 'x'"`));
   await wait(1500);
-  log('notif Karim (ignoré):', sh(`adb shell "cmd notification post -S messaging --conversation 'Retour CASA Sonicod' --message 'Karim:📷 Photo' casa2 'x'"`));
+  log('notif Karim (ignoré):', sh(`adb shell "cmd notification post -S messaging --conversation '${G}' --message 'Karim:📷 Photo' casa2 'x'"`));
   log('notif privée:', sh(`adb shell "cmd notification post -S messaging --conversation '' --message 'Youssef:📷 Photo' prive1 'x'"`));
   log('notif 2:', sh(`adb shell "cmd notification post -S messaging --conversation 'Famille' --message 'Ali:📷 Photo' fam1 'x'"`));
   await wait(3000);
@@ -55,7 +56,7 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   log('passage après 90 s:', await natRun());
   st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('SANS NOTIFICATION:', (st.orphans || []).map(o => o.n));
-  await js(`SonicodNative.botAssignOrphans(JSON.stringify(${JSON.stringify((st.orphans || []).map(o => o.u))}), 'Retour CASA Sonicod')`);
+  await js(`SonicodNative.botAssignOrphans(JSON.stringify(${JSON.stringify((st.orphans || []).map(o => o.u))}), '${G}')`);
   log('après choix du groupe:', await natRun());
   st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('JOURNAL après choix:', (st.log || []).slice(-3), '| reste sans groupe:', (st.orphans || []).length);
