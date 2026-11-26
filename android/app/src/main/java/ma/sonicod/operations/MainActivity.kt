@@ -278,6 +278,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (::webView.isInitialized) webView.evaluateJavascript("window.sonicodResume && window.sonicodResume()", null)
+        // App « SONICOD Bot » ouverte : on regarde tout de suite le dossier WhatsApp (photos arrivées sans notification)
+        if (BuildConfig.BOT && WaBot.isEnabled(this)) io.execute {
+            try { WaBot.run(this) } catch (e: Exception) {}
+            runOnUiThread { if (::webView.isInitialized) webView.evaluateJavascript("window.sonicodBotRefresh && window.sonicodBotRefresh()", null) }
+        }
     }
 
     /** Renvoie un résultat à la page (window.__nativeCb). */

@@ -82,6 +82,11 @@ object WaBot {
         while (l.length() > 40) l.remove(0)
     }
 
+    /** Dernière notification WhatsApp vue (pour savoir si Android laisse le bot les lire). */
+    @Volatile var lastWa = 0L
+    @Volatile var listenerOn = false
+    private val running = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun isEnabled(ctx: Context) = synchronized(lock) { load(ctx).optBoolean("enabled", false) }
 
     fun setEnabled(ctx: Context, on: Boolean) {
@@ -205,6 +210,8 @@ object WaBot {
                 n
             })
             .put("sdk", Build.VERSION.SDK_INT)
+            .put("lastWa", maxOf(lastWa, o.optLong("lastWa")))
+            .put("listener", listenerOn)
     }
 
     /* ---------------- notifications WhatsApp ---------------- */
@@ -222,6 +229,7 @@ object WaBot {
 
     fun onNotification(ctx: Context, sbn: StatusBarNotification) {
         if (sbn.packageName !in PKGS && !(sbn.packageName == "com.android.shell" && testMode(ctx))) return
+        lastWa = System.currentTimeMillis()
         val n = sbn.notification ?: return
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         val ex = n.extras ?: return
@@ -466,6 +474,14 @@ object WaBot {
 
     /** Relie notifications et fichiers, lit les étiquettes et envoie au Sheet. Renvoie un résumé. */
     fun run(ctx: Context): JSONObject {
+        if (!running.compareAndSet(false, true)) return JSONObject().put("ok", true).put("sent", 0).put("busy", true)
+        try { return runInner(ctx) } finally {
+            running.set(false)
+            if (lastWa > 0) edit(ctx) { it.put("lastWa", maxOf(lastWa, it.optLong("lastWa"))) }
+        }
+    }
+
+    private fun runInner(ctx: Context): JSONObject {
         val res = JSONObject()
         if (!hasFilesAccess(ctx)) { log(ctx, "⚠ Choisissez le dossier WhatsApp Business"); return res.put("ok", false).put("error", "Choisissez d'abord le dossier WhatsApp Business.") }
         if (mediaDirs(ctx, "img").isEmpty()) { log(ctx, "⚠ Dossier « WhatsApp Business Images » introuvable dans le dossier choisi"); return res.put("ok", false).put("error", "Dossier WhatsApp introuvable : choisissez « com.whatsapp.w4b ».") }
@@ -547,6 +563,25 @@ object WaBot {
             }
             groups to recs.values.toList()
         }
+        // photos sans notification qui sont de petites commandes avec PRIX : retirées tout de suite (elles ne comptent pas)
+        try {
+            val toCheck = synchronized(lock) { val o = load(ctx); val chk = o.optJSONObject("orphChecked") ?: JSONObject()
+                val a = o.optJSONArray("orphans") ?: JSONArray(); (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optString("k") == "img" && !chk.has(it.optString("u")) }.take(25) }
+            if (toCheck.isNotEmpty()) {
+                val small = HashSet<String>()
+                for (x in toCheck) { val u = x.optString("u"); val lab = readLabelFrom(ctx) { open(ctx, u) }; if (lab != null && lab.ticket) small.add(u) }
+                edit(ctx) { o ->
+                    val chk = o.obj("orphChecked"); toCheck.forEach { chk.put(it.optString("u"), 1) }
+                    if (chk.length() > 800) chk.keys().asSequence().toList().take(chk.length() - 600).forEach { chk.remove(it) }
+                    if (small.isNotEmpty()) {
+                        val a = o.optJSONArray("orphans") ?: JSONArray(); val keep = JSONArray(); val done = o.obj("orphanDone")
+                        for (i in 0 until a.length()) { val x = a.getJSONObject(i); if (x.optString("u") in small) done.put(x.optString("u"), System.currentTimeMillis()) else keep.put(x) }
+                        o.put("orphans", keep)
+                    }
+                }
+                if (small.isNotEmpty()) { log(ctx, "↷ ${small.size} photo(s) sans notification = petites commandes avec prix : ignorées"); newOrphans = maxOf(0, newOrphans - small.size) }
+            }
+        } catch (e: Exception) {}
         if (autoAssigned > 0) log(ctx, "↺ $autoAssigned photo(s) sans notification rattachée(s) automatiquement à leur groupe")
         if (newOrphans > 0) { log(ctx, "⚠ $newOrphans photo(s)/PDF reçus sans notification : choisissez le groupe"); notifyOrphans(ctx, newOrphans) }
         if (groups.length() == 0) { log(ctx, "Aucun groupe retour configuré"); return res.put("ok", true).put("sent", 0) }
@@ -668,7 +703,14 @@ class WaListener : android.service.notification.NotificationListenerService() {
     }
 
     override fun onListenerConnected() {
+        WaBot.listenerOn = true
         try { activeNotifications?.forEach { WaBot.onNotification(applicationContext, it) } } catch (e: Exception) {}
+    }
+
+    override fun onListenerDisconnected() {
+        WaBot.listenerOn = false
+        // Android a coupé la lecture des notifications : on demande à la rétablir
+        try { if (Build.VERSION.SDK_INT >= 24) requestRebind(android.content.ComponentName(this, WaListener::class.java)) } catch (e: Exception) {}
     }
 }
 
@@ -694,8 +736,9 @@ class BotWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
         }
 
         fun schedulePeriodic(ctx: Context) {
-            val req = PeriodicWorkRequestBuilder<BotWorker>(1, TimeUnit.HOURS).setConstraints(net).build()
-            WorkManager.getInstance(ctx).enqueueUniquePeriodicWork("wabot-periodic", ExistingPeriodicWorkPolicy.KEEP, req)
+            // toutes les 15 min (le minimum d'Android) : rattrape les photos arrivées sans notification
+            val req = PeriodicWorkRequestBuilder<BotWorker>(15, TimeUnit.MINUTES).setConstraints(net).build()
+            WorkManager.getInstance(ctx).enqueueUniquePeriodicWork("wabot-periodic", ExistingPeriodicWorkPolicy.UPDATE, req)
         }
     }
 }

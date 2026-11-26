@@ -950,6 +950,9 @@
       '<div class="card"><div class="sec"><b>1 · Autorisations</b></div>' +
       step(st.notif, 1, 'Lire les notifications WhatsApp', 'Pour savoir quel groupe envoie une photo ou un PDF.', 'Activer', 'bNotif') +
       (!st.notif && st.sdk >= 33 ? '<div class="note info small">Si Android dit « Paramètre restreint » : <a href="#" id="bInfo">Infos de l\'appli</a> → ⋮ en haut → <b>Autoriser les paramètres restreints</b>, puis réessayez.</div>' : '') +
+      (st.notif ? '<div class="note ' + (st.lastWa && Date.now() - st.lastWa < 6 * 3600000 ? 'info' : 'err') + ' small">Dernière notification WhatsApp reçue par le bot : <b>' +
+        (st.lastWa ? hm(st.lastWa) : 'aucune') + '</b>' + (st.lastWa && Date.now() - st.lastWa < 6 * 3600000 ? '' :
+        '<br>Si des photos sont arrivées depuis, Android a peut-être arrêté le bot : Paramètres → Applications → SONICOD Bot → <b>Démarrage automatique</b> (activé) et <b>Batterie → Aucune restriction</b>.') + '</div>' : '') +
       step(st.files, 2, 'Choisir le dossier WhatsApp Business', 'Une seule fois. Android ouvre « com.whatsapp.w4b » : appuyez sur « Utiliser ce dossier » puis « Autoriser ».', 'Choisir', 'bFiles') +
       (st.files && !st.whatsappFolder ? '<div class="note err small">Dans ce dossier, « WhatsApp Business Images » est introuvable : appuyez à nouveau sur Choisir et prenez <b>Android › media › com.whatsapp.w4b</b>.</div><button class="btn btn-ghost btn-sm" id="bFiles2">Choisir à nouveau</button>' : '') +
       '<div class="note info small">Dans WhatsApp Business : <b>Paramètres → Stockage et données → Téléchargement auto</b> : cochez <b>Photos</b> et <b>Documents</b>. Ne mettez pas les groupes retour en silencieux.</div>' +
