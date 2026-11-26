@@ -42,7 +42,7 @@ const sh = c => { try { return cp.execSync(c, { encoding: 'utf8' }).trim(); } ca
   await wait(3000);
   sh('adb push test.jpg /data/local/tmp/k.jpg'); sh('adb shell chmod 644 /data/local/tmp/k.jpg');
   sh('adb push label.jpg /data/local/tmp/l.jpg'); sh('adb push bon.pdf /data/local/tmp/b.pdf'); sh('adb shell chmod 644 /data/local/tmp/l.jpg /data/local/tmp/b.pdf');
-  RA(`cp /data/local/tmp/k.jpg "${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg" && cp /data/local/tmp/b.pdf "${D}/WhatsApp Business Documents/BRV-2026112500123.pdf" && sleep 2 && cp /data/local/tmp/l.jpg "${D}/WhatsApp Business Images/IMG-20261126-WA0002.jpg" && sleep 3 && cp /data/local/tmp/k.jpg "${D}/WhatsApp Business Images/IMG-20261126-WA0003.jpg"`);
+  RA(`cp /data/local/tmp/k.jpg "${D}/WhatsApp Business Images/IMG-20261125-WA0001.jpg" && cp /data/local/tmp/b.pdf "${D}/WhatsApp Business Documents/BRV-2026112500123.pdf" && sleep 2 && cp /data/local/tmp/l.jpg "${D}/WhatsApp Business Images/IMG-20261126-WA0002.jpg" && sleep 3 && cp /data/local/tmp/k.jpg "${D}/WhatsApp Business Images/IMG-20261126-WA0003.jpg" && sleep 3 && cp /data/local/tmp/k.jpg "${D}/WhatsApp Business Images/IMG-20261126-WA0004.jpg"`);
   st = JSON.parse(await js('SonicodNative.botStatus()'));
   log('groupes vus (non suivis):', (st.seen || []).map(x => x.name), '| en attente de fichier:', st.waiting);
   await wait(15000);
