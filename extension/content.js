@@ -20,7 +20,14 @@
   const hash = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h).toString(16); };
 
   let cities = [];
-  let selDay = '';           // jour choisi dans le panneau (gardé quand le panneau se redessine)
+  let selDay = '', selDay2 = '';
+  /** Jours entre « Du » et « Au » (31 jours au plus). */
+  function daysRange(a, b) {
+    const out = []; if (!a) return out; if (!b || b < a) b = a;
+    const d = new Date(a + 'T12:00:00');
+    while (out.length < 31) { const iso = isoOf(d); out.push(iso); if (iso >= b) break; d.setDate(d.getDate() + 1); }
+    return out;
+  }           // jour choisi dans le panneau (gardé quand le panneau se redessine)
   let results = [];          // étiquettes trouvées
   let logLines = [];
   const log = s => { logLines.push(s); const el = $('#snc-log'); if (el) el.textContent = logLines.slice(-12).join('\n'); };
@@ -208,7 +215,7 @@
   function capturePdf(el) {
     return new Promise(resolve => {
       let done = false;
-      const finish = v => { if (done) return; done = true; window.removeEventListener('message', onMsg); window.postMessage({ __snc: 'capture', on: false }, '*'); resolve(v); };
+      const finish = v => { if (done) return; done = true; clearInterval(tries); window.removeEventListener('message', onMsg); window.postMessage({ __snc: 'capture', on: false }, '*'); resolve(v); };
       const onMsg = e => {
         if (e.source !== window || !e.data || e.data.__snc !== 'blob') return;
         const fr = new FileReader();
@@ -218,9 +225,20 @@
       };
       window.addEventListener('message', onMsg);
       window.postMessage({ __snc: 'capture', on: true }, '*');
-      const target = el.closest('[role="button"]') || el.closest('[data-id] div[tabindex]') || el;
-      fireClick(target);
-      setTimeout(() => finish(null), 12000);
+      const msg = el.closest('[data-id]') || el.closest('[role="row"]') || el.parentElement;
+      // essais successifs : la bulle du document, l'icône de téléchargement, puis le nom du fichier
+      const targets = [
+        el.closest('[role="button"]'),
+        msg && msg.querySelector('[data-icon*="download"], [data-icon*="audio-download"], [aria-label*="ownload"], [aria-label*="élécharger"]'),
+        el.closest('div[tabindex]'),
+        msg && msg.querySelector('[data-icon*="document"], [data-icon*="pdf"], [data-icon*="PDF"]'),
+        el
+      ].filter((x, i, a) => x && a.indexOf(x) === i);
+      let k = 0;
+      const clickNext = () => { const t = targets[k++]; if (t) fireClick(t.closest('[role="button"]') || t); };
+      clickNext();
+      const tries = setInterval(() => { if (k < targets.length) clickNext(); }, 3500);
+      setTimeout(() => finish(null), 3500 * targets.length + 8000);
     });
   }
 
@@ -337,24 +355,18 @@
    *  3) sinon 1 photo = 1 colis, et le même n° de suivi sur 2 photos = 1 seul colis.
    */
   function countColis(reads, nPhotos) {
-    const brvs = {}, loose = {};
-    let unread = 0, withTrack = 0;
-    const tracks = {};
+    // Règle SONICOD : 1 photo = 1 colis (la même photo / le même n° de suivi sur 2 photos ne compte qu'une fois).
+    // Le nombre écrit sur l'étiquette « BON RETOUR » est gardé en information dans la note.
+    const brvs = {}, tracks = {};
+    let withTrack = 0;
     reads.forEach(d => {
       if (!d) return;
-      const isLabel = d.label !== false && d.colis != null;
-      if (isLabel) { if (d.brv) brvs[d.brv] = Math.max(brvs[d.brv] || 0, d.colis); else loose[d.colis] = 1; }
-      else if (d.label) unread++;
-      else if (d.tracks && d.tracks.length) { withTrack++; d.tracks.forEach(t => { tracks[t] = 1; }); }
+      if (d.label !== false && d.colis != null) { const k = d.brv || ('n' + d.colis); brvs[k] = Math.max(brvs[k] || 0, d.colis); }
+      if (d.tracks && d.tracks.length) { withTrack++; d.tracks.forEach(t => { tracks[t] = 1; }); }
     });
-    const vals = Object.values(brvs);
-    Object.keys(loose).forEach(n => { if (vals.indexOf(+n) < 0) brvs['n' + n] = +n; });
-    if (Object.keys(brvs).length) return { colis: Object.values(brvs).reduce((a, b) => a + b, 0), source: 'étiquette', brvs };
-    if (unread) return { colis: null, source: 'étiquette illisible – à vérifier', brvs };
-    const labelsRead = reads.filter(d => d && d.label !== false && d.colis != null).length;
-    const n = Object.keys(tracks).length + Math.max(0, nPhotos - withTrack - labelsRead);
-    if (!n) return { colis: null, source: '', brvs };
-    return { colis: n, source: 'compté : ' + n + ' colis' + (n !== nPhotos ? ' sur ' + nPhotos + ' photo(s)' : ' (' + nPhotos + ' photo(s))'), brvs };
+    const n = Object.keys(tracks).length + Math.max(0, nPhotos - withTrack);
+    const lab = Object.keys(brvs).length ? Object.values(brvs).reduce((a, b) => a + b, 0) : null;
+    return { colis: n || null, source: n + ' photo(s)' + (lab != null ? ' · étiquette : ' + lab : ''), brvs };
   }
 
   /** Lire le groupe ouvert. */
@@ -427,7 +439,7 @@
     const cityOpts = sel => '<option value="">— Ville / Livreur —</option>' + cities.map(c => '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
     panel.innerHTML =
       '<div class="h"><b>⚡ SONICOD · Retours du jour</b><button id="snc-x">✕</button></div><div class="b">' +
-      '<label>Jour</label><input type="date" id="snc-day" value="' + (selDay || today) + '">' +
+      '<label>Dates à lire</label><div class="row" style="align-items:center"><span style="font-size:13px">Du</span><input type="date" id="snc-day" value="' + (selDay || today) + '"><span style="font-size:13px">au</span><input type="date" id="snc-day2" value="' + (selDay2 || selDay || today) + '"></div>' +
       '<label>Groupe ouvert</label><div class="grp">' + (group ? esc(group) : 'Aucun – ouvrez un groupe retour') + '</div>' +
       (group ? '<label>Ce groupe correspond à</label><select id="snc-city">' + cityOpts(groups[group] || '') + '</select>' : '') +
       '<div class="row"><button class="btn" id="snc-one"' + (group ? '' : ' disabled') + '>Lire ce groupe</button>' +
@@ -456,7 +468,8 @@
       '<label>Adresse du script (…/exec)</label><input id="snc-url" placeholder="(par défaut)" value="' + esc(url) + '">' +
       '</details></div>';
     $('#snc-x').onclick = () => { panel.style.display = 'none'; };
-    $('#snc-day').onchange = () => { selDay = $('#snc-day').value || ''; };
+    $('#snc-day').onchange = () => { selDay = $('#snc-day').value || ''; if (!selDay2 || selDay2 < selDay) { selDay2 = selDay; $('#snc-day2').value = selDay; } };
+    $('#snc-day2').onchange = () => { selDay2 = $('#snc-day2').value || ''; };
     const citySel = $('#snc-city');
     if (citySel) citySel.onchange = async () => {
       const g = (await store.get('groups')) || {};
@@ -474,13 +487,14 @@
     };
     $('#snc-url').onchange = async () => { await store.set('serverUrl', $('#snc-url').value.trim()); log('Adresse enregistrée.'); };
     $('#snc-one').onclick = async () => {
-      const day = $('#snc-day').value || today;
+      const range = daysRange($('#snc-day').value || today, $('#snc-day2').value || $('#snc-day').value || today);
+      const day = range[0];
       if (citySel && citySel.value) { const g = (await store.get('groups')) || {}; g[group] = citySel.value; await store.set('groups', g); }
       if (citySel && !citySel.value && !guessCity(group, '', groups)) { log('⚠ Choisissez d\'abord la ville dans « Ce groupe correspond à ».'); citySel.focus(); return; }
-      busy(true); await analyseOpenChat(day); busy(false);
+      busy(true); results = []; for (const d of range) await analyseOpenChat(d); busy(false);
     };
     $('#snc-all').onclick = async () => {
-      busy(true); results = []; await runAll([$('#snc-day').value || today]); busy(false); renderPanel();
+      busy(true); results = []; await runAll(daysRange($('#snc-day').value || today, $('#snc-day2').value || $('#snc-day').value || today)); busy(false); renderPanel();
     };
     const saveSched = async (sc) => { await store.set('sched', sc); chrome.runtime.sendMessage({ type: 'schedule', sched: sc }); };
     $('#snc-auto').onchange = async () => { sched.on = $('#snc-auto').checked; await store.set('lastSlot', Date.now()); await saveSched(sched); log(sched.on ? 'Programmation activée : ' + sched.times.join(', ') : 'Programmation arrêtée.'); };
