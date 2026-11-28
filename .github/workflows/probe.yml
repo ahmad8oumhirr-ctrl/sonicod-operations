@@ -11,6 +11,6 @@ jobs:
           U='https://script.google.com/macros/s/AKfycbwJ1PN16V9WjRuOVN9cky7pKRTyufnSGlPCpw-gi4BKfGoXOQS1kn8pbcrrhPimt4sx/exec'
           K='SNC-1b7ae4568269c1f64afde3ce18d9639c'
           for a in ping config listPending actions; do
-            echo "== $a"; curl -s -L -X POST -H 'Content-Type: text/plain' -d "{\"action\":\"$a\",\"key\":\"$K\"}" "$U" | head -c 3000; echo
+            echo "== $a"; curl -s -L -H 'Content-Type: text/plain' -d "{\"action\":\"$a\",\"key\":\"$K\"}" "$U" | head -c 2500; echo
           done
-          echo "== addPending sans données (doit être refusé)"; curl -s -L -X POST -H 'Content-Type: text/plain' -d "{\"action\":\"addPending\",\"key\":\"$K\"}" "$U" | head -c 500; echo
+          echo "== addPending sans données (doit être refusé)"; curl -s -L -H 'Content-Type: text/plain' -d "{\"action\":\"addPending\",\"key\":\"$K\"}" "$U" | head -c 500; echo
